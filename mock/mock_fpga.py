@@ -1,13 +1,22 @@
 import os
+import sys
+from pathlib import Path
 import numpy as np
 import pandas as pd
+
+# Add project root to sys.path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from config import RO_STAGES, calculate_ro_delay_ns, validate_ro_delay
 
 # ============================================================
 # Configuration
 # ============================================================
 
 NUM_SAMPLES = 10000
-OUTPUT_FILE = "../data/raw/mock_fpga_data.csv"
+OUTPUT_FILE = PROJECT_ROOT / "data" / "raw" / "mock_fpga_data.csv"
 
 np.random.seed(42)
 
@@ -25,19 +34,17 @@ def generate_measurement(timestamp, degradation):
     """
 
     # --------------------------------------------------------
-    # Temperature
+    # Temperature (°C)
     # --------------------------------------------------------
-
     temperature = (
-        35
-        + 18 * degradation
+        35.0
+        + 18.0 * degradation
         + np.random.normal(0, 0.8)
     )
 
     # --------------------------------------------------------
-    # Supply voltages
+    # Supply voltages (V)
     # --------------------------------------------------------
-
     vccint = (
         1.000
         - 0.010 * degradation
@@ -57,44 +64,34 @@ def generate_measurement(timestamp, degradation):
     )
 
     # --------------------------------------------------------
-    # Ring oscillator
-    #
-    # Healthy FPGA ≈ higher frequency
-    # Degraded FPGA ≈ lower frequency
+    # Ring oscillator frequency (MHz)
+    # Healthy FPGA ≈ higher frequency (~250 MHz)
+    # Degraded FPGA ≈ lower frequency (~235 MHz)
     # --------------------------------------------------------
-
     ro_frequency = (
-        250
-        - 15 * degradation
+        250.0
+        - 15.0 * degradation
         + np.random.normal(0, 0.8)
     )
 
     # --------------------------------------------------------
-    # Approximate RO delay
-    #
-    # This is a simplified simulated relationship.
-    # Actual hardware delay must be measured on the FPGA.
+    # Physical Derived RO Stage Propagation Delay (ns)
+    # Formula: tau = 1 / (2 * N * f_Hz)
+    # tau_ns = 1000 / (2 * N * f_MHz)
+    # For N=5 stages and f=235-250 MHz -> tau_ns ~ 0.400 - 0.426 ns/stage
     # --------------------------------------------------------
-
-    ro_delay = (
-        1 / (2 * ro_frequency)
-    )
-
-    # Convert to ns for easier interpretation
-
-    ro_delay_ns = ro_delay * 1e9
+    ro_delay_ns = calculate_ro_delay_ns(ro_frequency, stages=RO_STAGES)
 
     # --------------------------------------------------------
     # Functional error rate
     # --------------------------------------------------------
-
     base_error_probability = (
         0.00001
         + 0.003 * degradation
     )
 
     error_rate = max(
-        0,
+        0.0,
         base_error_probability
         + np.random.normal(0, 0.0002)
     )
@@ -102,25 +99,22 @@ def generate_measurement(timestamp, degradation):
     # --------------------------------------------------------
     # Determine simulated health label
     # --------------------------------------------------------
-
     if degradation < 0.35:
         health = "Healthy"
-
     elif degradation < 0.70:
         health = "Warning"
-
     else:
         health = "Degraded"
 
     return {
         "Timestamp": timestamp,
-        "Temperature": temperature,
-        "VCCINT": vccint,
-        "VCCAUX": vccaux,
-        "VCCBRAM": vccbram,
-        "RO_Frequency": ro_frequency,
-        "RO_Delay_ns": ro_delay_ns,
-        "Error_Rate": error_rate,
+        "Temperature": round(temperature, 4),
+        "VCCINT": round(vccint, 4),
+        "VCCAUX": round(vccaux, 4),
+        "VCCBRAM": round(vccbram, 4),
+        "RO_Frequency": round(ro_frequency, 4),
+        "RO_Delay_ns": round(ro_delay_ns, 4),
+        "Error_Rate": round(error_rate, 6),
         "Health": health
     }
 
@@ -130,49 +124,40 @@ def generate_measurement(timestamp, degradation):
 # ============================================================
 
 def generate_dataset():
-
     data = []
 
     for i in range(NUM_SAMPLES):
-
         timestamp = i
-
-        # Slowly changing degradation
-
         degradation = i / NUM_SAMPLES
-
-        measurement = generate_measurement(
-            timestamp,
-            degradation
-        )
-
+        measurement = generate_measurement(timestamp, degradation)
         data.append(measurement)
 
     df = pd.DataFrame(data)
 
+    # Perform physical sanity validation on generated dataset
+    sample_freq = df["RO_Frequency"].iloc[0]
+    sample_delay = df["RO_Delay_ns"].iloc[0]
+    is_valid, msg = validate_ro_delay(sample_freq, RO_STAGES, sample_delay)
+    if not is_valid:
+        raise ValueError(f"CRITICAL SANITY CHECK FAILED: {msg}")
+
     # Create directory if necessary
+    os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
+    df.to_csv(OUTPUT_FILE, index=False)
 
-    os.makedirs(
-        os.path.dirname(OUTPUT_FILE),
-        exist_ok=True
-    )
-
-    df.to_csv(
-        OUTPUT_FILE,
-        index=False
-    )
-
-    print("Dataset generated successfully.")
-    print(f"Samples: {len(df)}")
+    print("==================================================")
+    print("MOCK FPGA DATASET GENERATION & UNIT AUDIT")
+    print("==================================================")
+    print(f"Dataset generated successfully with {len(df)} samples.")
     print(f"Saved to: {OUTPUT_FILE}")
-
+    print(f"RO Inverter Stages (N): {RO_STAGES}")
+    print(f"Sample Initial Frequency: {sample_freq:.2f} MHz -> Delay: {sample_delay:.4f} ns/stage")
+    print(f"Sample Degraded Frequency: {df['RO_Frequency'].iloc[-1]:.2f} MHz -> Delay: {df['RO_Delay_ns'].iloc[-1]:.4f} ns/stage")
+    print(f"Validation Status: {msg}")
     print("\nHealth distribution:")
     print(df["Health"].value_counts())
+    print("==================================================")
 
-
-# ============================================================
-# Main
-# ============================================================
 
 if __name__ == "__main__":
     generate_dataset()
