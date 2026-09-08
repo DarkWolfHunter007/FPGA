@@ -181,8 +181,7 @@ FPGA/
 │   ├── predict.py              # ML inference pipeline wrapper
 │   └── train_model.py          # ML training and evaluation script
 ├── mock/
-│   ├── mock_fpga.py            # Offline synthetic degradation dataset generator
-│   └── mock_live.py            # Real-time synthetic telemetry stream generator
+│   └── mock_fpga.py            # Offline synthetic degradation dataset generator
 ├── requirements.txt            # Python dependencies
 ├── startup.md                  # System startup & execution guide (this file)
 └── .gitignore                  # Git ignore rules for clean repository state

@@ -2,8 +2,5 @@ numpy
 pandas
 scikit-learn
 joblib
-matplotlib
-langgraph
-langchain
 streamlit
 pyserial

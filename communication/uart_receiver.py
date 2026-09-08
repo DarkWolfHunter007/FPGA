@@ -7,7 +7,6 @@ over Serial / UART to receive real-time on-chip sensor telemetry.
 
 import json
 import time
-import re
 import sys
 from pathlib import Path
 from typing import Optional, Dict, Any, List

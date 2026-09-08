@@ -7,7 +7,6 @@ Provides clean abstraction for swapping between:
 - Physical Basys 3 Artix-7 UART Stream (LiveUARTDataSource)
 """
 
-from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, Any, Tuple, Optional, List
 import time
@@ -62,19 +61,7 @@ def validate_and_clean_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, bool, List[
     return clean_df, True, warnings
 
 
-class BaseDataSource(ABC):
-    """Abstract interface for FPGA Telemetry Providers."""
-
-    @abstractmethod
-    def get_data(self, window_size: int = 150, sample_idx: Optional[int] = None) -> Tuple[pd.DataFrame, pd.Series, Dict[str, Any]]:
-        pass
-
-    @abstractmethod
-    def reset(self):
-        pass
-
-
-class MockCSVDataSource(BaseDataSource):
+class MockCSVDataSource:
     """
     Replays historical mock dataset from CSV file.
     Supports step-by-step scrubber/playhead indexing.
@@ -129,7 +116,7 @@ class MockCSVDataSource(BaseDataSource):
         pass
 
 
-class LiveSimulationDataSource(BaseDataSource):
+class LiveSimulationDataSource:
     """
     Generates dynamic step-by-step FPGA sensor measurements in real time,
     gradually simulating aging degradation drift.
@@ -209,7 +196,7 @@ class LiveSimulationDataSource(BaseDataSource):
         self._initialize_buffer()
 
 
-class LiveUARTDataSource(BaseDataSource):
+class LiveUARTDataSource:
     """
     Receives live sensor telemetry over Serial/UART from the physical Artix-7 board.
     Buffers historical incoming measurements to generate rolling feature windows.

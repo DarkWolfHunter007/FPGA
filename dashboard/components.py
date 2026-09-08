@@ -202,7 +202,7 @@ def render_measurements_grid(latest: pd.Series, baseline: Dict[str, float], samp
     with c6:
         st.html(
             render_measurement_card(
-                label="Derived RO Stage Delay*",
+                label="Derived RO Stage Delay",
                 value_str=f"{latest['RO_Delay_ns']:.4f}",
                 unit="ns/stage",
                 delta_str=f"Δ {ro_delay_delta:+.4f} ns",
@@ -282,20 +282,6 @@ def render_ring_oscillator_section(latest: pd.Series, baseline: Dict[str, float]
                 bg_color="rgba(0, 229, 255, 0.12)"
             )
         )
-
-    # Scientific formula callout
-    callout_html = textwrap.dedent(f"""
-<div class="science-callout">
-    <strong>Mathematical Modeling & Physical Derivation:</strong><br>
-    On-chip gate aging (e.g. from NBTI / HCI) slows transistor switching speeds, shifting the Ring Oscillator frequency downward.
-    For an <em>N</em>-stage Ring Oscillator (configured with <em>N</em> = {RO_STAGES} inverting stages), the equivalent logic propagation delay per stage is derived via:
-    <br>
-    <code style="color: #00E5FF; font-size: 0.95rem;">&tau; = 1 / (2 &times; N &times; f_Hz) = 1000 / (2 &times; {RO_STAGES} &times; f_MHz) [ns/stage]</code>
-    <br>
-    <span style="font-size: 0.8rem; color: #94A3B8;">*Notice: The RO propagation delay is an estimated/derived quantity calculated from measured oscillation frequency and is not directly tapped via physical sub-nanosecond delay probes on-chip.</span>
-</div>
-""").strip()
-    st.html(callout_html)
 
 
 def render_baseline_comparison(latest: pd.Series, baseline: Dict[str, float]):

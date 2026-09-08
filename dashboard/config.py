@@ -8,9 +8,6 @@ No magic numbers in UI code.
 from typing import Dict, Any
 from config import RO_STAGES, calculate_ro_delay_ns, validate_ro_delay, DEVICE_NAME, ARCHITECTURE
 
-# Backward compatibility alias
-RO_STAGE_COUNT = RO_STAGES
-
 # ============================================================
 # Sensor Operating Nominals & Validation Bounds
 # ============================================================

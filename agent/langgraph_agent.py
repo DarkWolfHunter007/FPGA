@@ -14,7 +14,6 @@ Distinction of roles:
 import sys
 from pathlib import Path
 from typing import TypedDict, List, Dict, Any, Optional
-from langgraph.graph import StateGraph, END
 
 # Allow import from project root
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -282,25 +281,20 @@ def formulate_recommendations(state: FPGAState) -> FPGAState:
 
 
 # ============================================================
-# Build & Compile LangGraph StateGraph
+# Diagnostic Reasoning Pipeline
 # ============================================================
 
-def build_fpga_agent():
-    graph = StateGraph(FPGAState)
+class DiagnosticPipeline:
+    """Sequential diagnostic reasoning and advisory pipeline."""
 
-    graph.add_node("analyze_indicators", analyze_indicators)
-    graph.add_node("assess_risk", assess_risk)
-    graph.add_node("formulate_recommendations", formulate_recommendations)
-
-    graph.set_entry_point("analyze_indicators")
-    graph.add_edge("analyze_indicators", "assess_risk")
-    graph.add_edge("assess_risk", "formulate_recommendations")
-    graph.add_edge("formulate_recommendations", END)
-
-    return graph.compile()
+    @staticmethod
+    def invoke(state: FPGAState) -> FPGAState:
+        s = analyze_indicators(dict(state))
+        s = assess_risk(s)
+        return formulate_recommendations(s)
 
 
-app = build_fpga_agent()
+app = DiagnosticPipeline()
 
 
 def evaluate_fpga_health(telemetry: Dict[str, Any]) -> Dict[str, Any]:
