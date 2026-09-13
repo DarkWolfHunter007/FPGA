@@ -17,7 +17,7 @@ import pandas as pd
 from config import RO_STAGES, calculate_ro_delay_ns
 from ml.feature_engineering import create_features
 from communication.uart_receiver import FPGAUARTReceiver
-from dashboard.config import SENSOR_CONFIG
+from dashboard.config import SENSOR_CONFIG, evaluate_engineering_limits, LimitSeverity
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -49,13 +49,14 @@ def validate_and_clean_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, bool, List[
     if "RO_Delay_ns" not in clean_df.columns or clean_df["RO_Delay_ns"].isna().any():
         clean_df["RO_Delay_ns"] = clean_df["RO_Frequency"].apply(lambda f: calculate_ro_delay_ns(f, RO_STAGES))
 
-    # Physical bounds checks
+    # Physical bounds checks (Absolute sensor limits)
     for col, cfg in SENSOR_CONFIG.items():
         if col in clean_df.columns:
-            min_v, max_v = cfg["min_valid"], cfg["max_valid"]
+            min_v = cfg.get("physical_min", cfg.get("min_valid", -40.0))
+            max_v = cfg.get("physical_max", cfg.get("max_valid", 125.0))
             out_of_bounds = ((clean_df[col] < min_v) | (clean_df[col] > max_v)).sum()
             if out_of_bounds > 0:
-                warnings.append(f"{out_of_bounds} samples in {col} exceeded physical bounds [{min_v}, {max_v}]. Clipping to valid range.")
+                warnings.append(f"{out_of_bounds} samples in {col} exceeded physical sensor bounds [{min_v}, {max_v}]. Clipping.")
                 clean_df[col] = clean_df[col].clip(lower=min_v, upper=max_v)
 
     return clean_df, True, warnings
@@ -103,12 +104,24 @@ class MockCSVDataSource:
         history_df = self.engineered_df.iloc[start_idx:sample_idx + 1].copy()
         latest_sample = self.engineered_df.iloc[sample_idx].copy()
 
+        eng_assessment = evaluate_engineering_limits(latest_sample.to_dict())
+
         metadata = {
             "source_type": "MOCK",
             "source_label": "MOCK CSV DATASET",
             "total_samples": total_samples,
             "current_index": sample_idx,
-            "baseline": self.baseline_sample.to_dict() if self.baseline_sample is not None else {}
+            "baseline": self.baseline_sample.to_dict() if self.baseline_sample is not None else {},
+            "engineering_assessment": eng_assessment.to_dict(),
+            "provenance": {
+                "Temperature": "MOCK_REPLAY",
+                "VCCINT": "MOCK_REPLAY",
+                "VCCAUX": "MOCK_REPLAY",
+                "VCCBRAM": "MOCK_REPLAY",
+                "RO_Frequency": "MOCK_REPLAY",
+                "RO_Delay_ns": "DERIVED",
+                "Error_Rate": "MOCK_REPLAY"
+            }
         }
         return history_df, latest_sample, metadata
 
@@ -183,12 +196,24 @@ class LiveSimulationDataSource:
         history_df = engineered_df.tail(window_size).copy()
         latest_sample = engineered_df.iloc[-1].copy()
 
+        eng_assessment = evaluate_engineering_limits(latest_sample.to_dict())
+
         metadata = {
             "source_type": "SIMULATION",
             "source_label": "DYNAMIC SIMULATION STREAM",
             "total_samples": len(engineered_df),
             "current_index": len(engineered_df) - 1,
-            "baseline": self.baseline_sample
+            "baseline": self.baseline_sample,
+            "engineering_assessment": eng_assessment.to_dict(),
+            "provenance": {
+                "Temperature": "SIMULATION",
+                "VCCINT": "SIMULATION",
+                "VCCAUX": "SIMULATION",
+                "VCCBRAM": "SIMULATION",
+                "RO_Frequency": "SIMULATION",
+                "RO_Delay_ns": "DERIVED",
+                "Error_Rate": "SIMULATION"
+            }
         }
         return history_df, latest_sample, metadata
 
@@ -199,7 +224,7 @@ class LiveSimulationDataSource:
 class LiveUARTDataSource:
     """
     Receives live sensor telemetry over Serial/UART from the physical Artix-7 board.
-    Buffers historical incoming measurements to generate rolling feature windows.
+    Buffers incoming measurements and generates rolling feature windows for ML and UI.
     """
 
     def __init__(self, port: str = "COM3", baudrate: int = 115200, buffer_size: int = 200):
@@ -214,15 +239,29 @@ class LiveUARTDataSource:
     def disconnect(self):
         self.receiver.disconnect()
 
-    def poll_hardware(self) -> Optional[Dict[str, float]]:
+    def poll_hardware(self) -> Optional[Dict[str, Any]]:
         packet = self.receiver.read_packet()
-        if packet:
-            self.buffer.append(packet)
+        if packet and "Temperature" in packet:
+            # Clean numeric data for DataFrame buffer
+            meas_dict = {
+                "Timestamp": packet.get("Timestamp", time.time()),
+                "Temperature": float(packet["Temperature"]),
+                "VCCINT": float(packet["VCCINT"]),
+                "VCCAUX": float(packet["VCCAUX"]),
+                "VCCBRAM": float(packet["VCCBRAM"]),
+                "RO_Frequency": float(packet["RO_Frequency"]),
+                "RO_Delay_ns": float(packet["RO_Delay_ns"]),
+                "Error_Rate": float(packet["Error_Rate"])
+            }
+            self.buffer.append(meas_dict)
             if len(self.buffer) > self.buffer_size:
                 self.buffer.pop(0)
+
             if self.baseline_sample is None and len(self.buffer) >= 5:
                 init_df = pd.DataFrame(self.buffer[:5])
-                self.baseline_sample = init_df[["Temperature", "VCCINT", "VCCAUX", "VCCBRAM", "RO_Frequency", "RO_Delay_ns", "Error_Rate"]].mean().to_dict()
+                self.baseline_sample = init_df[
+                    ["Temperature", "VCCINT", "VCCAUX", "VCCBRAM", "RO_Frequency", "RO_Delay_ns", "Error_Rate"]
+                ].mean().to_dict()
         return packet
 
     def get_data(self, window_size: int = 150, sample_idx: Optional[int] = None) -> Tuple[pd.DataFrame, pd.Series, Dict[str, Any]]:
@@ -235,7 +274,7 @@ class LiveUARTDataSource:
                 "VCCBRAM": 1.000,
                 "RO_Frequency": 250.0,
                 "RO_Delay_ns": 0.4000,
-                "Error_Rate": 0.00001
+                "Error_Rate": 0.000010
             }]
             raw_df = pd.DataFrame(dummy)
         else:
@@ -247,11 +286,35 @@ class LiveUARTDataSource:
         history_df = engineered_df.tail(window_size).copy()
         latest_sample = engineered_df.iloc[-1].copy()
 
+        diagnostics = self.receiver.get_diagnostics()
+
+        prov_map = {
+            "Temperature": "MEASURED",
+            "VCCINT": "MEASURED",
+            "VCCAUX": "MEASURED",
+            "VCCBRAM": "MEASURED",
+            "RO_Frequency": "MEASURED",
+            "RO_Delay_ns": "DERIVED",
+            "Error_Rate": "MEASURED"
+        }
+
+        eng_assessment = evaluate_engineering_limits(latest_sample.to_dict(), provenance_map=prov_map)
+
         metadata = {
             "source_type": "LIVE_UART",
             "source_label": f"LIVE UART ({self.receiver.port})",
             "is_connected": self.receiver.is_connected,
+            "state": self.receiver.state.value,
             "packet_count": self.receiver.packet_count,
+            "error_count": self.receiver.error_count,
+            "packet_rate_hz": self.receiver.get_packet_rate_hz(),
+            "handshake_detected": self.receiver.handshake_detected,
+            "diagnostics": diagnostics,
+            "user_provided": ["Temperature", "VCCINT", "VCCAUX", "VCCBRAM", "RO_Frequency", "Error_Rate"],
+            "derived": ["RO_Delay_ns"],
+            "assumed": [],
+            "provenance": prov_map,
+            "engineering_assessment": eng_assessment.to_dict(),
             "baseline": self.baseline_sample or {
                 "Temperature": 35.0,
                 "VCCINT": 1.000,
@@ -259,7 +322,7 @@ class LiveUARTDataSource:
                 "VCCBRAM": 1.000,
                 "RO_Frequency": 250.0,
                 "RO_Delay_ns": 0.4000,
-                "Error_Rate": 0.00001
+                "Error_Rate": 0.000010
             }
         }
         return history_df, latest_sample, metadata
@@ -267,3 +330,227 @@ class LiveUARTDataSource:
     def reset(self):
         self.buffer.clear()
         self.baseline_sample = None
+
+
+class EstimatedDataSource:
+    """
+    Synthesizes a valid FPGA telemetry frame from user-provided manual inputs.
+    Gracefully handles partial inputs, deterministic physical derivations (RO Delay),
+    nominal baseline imputation for omitted channels, and provenance tracking.
+    """
+
+    NOMINAL_BASELINE: Dict[str, float] = {
+        "Temperature": 35.0,
+        "VCCINT": 1.000,
+        "VCCAUX": 1.800,
+        "VCCBRAM": 1.000,
+        "RO_Frequency": 250.0,
+        "RO_Delay_ns": 0.4000,
+        "Error_Rate": 0.00001
+    }
+
+    # Relative diagnostic significance weights of telemetry channels
+    CHANNEL_WEIGHTS: Dict[str, float] = {
+        "Temperature": 0.30,
+        "RO_Frequency": 0.35,
+        "Error_Rate": 0.15,
+        "VCCINT": 0.08,
+        "VCCAUX": 0.06,
+        "VCCBRAM": 0.06
+    }
+
+    def __init__(self, initial_inputs: Optional[Dict[str, Optional[float]]] = None):
+        self.user_inputs: Dict[str, float] = {}
+        if initial_inputs:
+            self.set_inputs(initial_inputs)
+
+    @staticmethod
+    def validate_channel(channel: str, value: Any) -> Tuple[bool, Optional[float], Optional[str], Optional[str]]:
+        """
+        Validates a single telemetry value against the three-tier validation architecture:
+          1. Input Validity (Numeric parsing)
+          2. Physical Sensor Validity (Absolute limits)
+          3. Operating Range (Operating bounds)
+        Returns: (is_valid, parsed_float_or_None, error_message_or_None, warning_message_or_None)
+        """
+        if value is None or str(value).strip() == "":
+            return True, None, None, None
+
+        cfg = SENSOR_CONFIG.get(channel)
+        if not cfg:
+            return False, None, f"Unknown sensor channel: {channel}", None
+
+        # 1. Input Validity Check
+        try:
+            val_float = float(value)
+        except (ValueError, TypeError):
+            return False, None, f"{cfg['display_name']} must be a valid numerical value.", None
+
+        # 2. Physical Sensor Validity Check (Rejection of impossible values)
+        phys_min = cfg.get("physical_min", cfg.get("min_valid", -40.0))
+        phys_max = cfg.get("physical_max", cfg.get("max_valid", 125.0))
+        if not (phys_min <= val_float <= phys_max):
+            return False, None, (
+                f"{cfg['display_name']} ({val_float} {cfg['unit']}) is outside physical sensor bounds "
+                f"[{phys_min}, {phys_max}] {cfg['unit']}."
+            ), None
+
+        # 3. Operating Health Range Check (Soft warning, form is permitted to run)
+        op_min = cfg.get("operating_min", cfg.get("min_nominal", phys_min))
+        op_max = cfg.get("operating_max", cfg.get("max_nominal", phys_max))
+        warning_msg = None
+        if not (op_min <= val_float <= op_max):
+            warning_msg = (
+                f"{cfg['display_name']} ({val_float} {cfg['unit']}) is outside expected operating range "
+                f"[{op_min}, {op_max}] {cfg['unit']}."
+            )
+
+        return True, val_float, None, warning_msg
+
+    def set_inputs(self, raw_inputs: Dict[str, Any]) -> Tuple[bool, List[str], List[str]]:
+        """
+        Validates and updates user-supplied telemetry values.
+        Returns: (all_valid, list_of_validation_errors, list_of_operating_warnings)
+        """
+        errors: List[str] = []
+        warnings: List[str] = []
+        parsed_dict: Dict[str, float] = {}
+
+        for ch in ["Temperature", "VCCINT", "VCCAUX", "VCCBRAM", "RO_Frequency", "Error_Rate"]:
+            val = raw_inputs.get(ch)
+            is_valid, parsed_val, err_msg, warn_msg = self.validate_channel(ch, val)
+            if not is_valid and err_msg:
+                errors.append(err_msg)
+            elif parsed_val is not None:
+                parsed_dict[ch] = parsed_val
+                if warn_msg:
+                    warnings.append(warn_msg)
+
+        if errors:
+            return False, errors, warnings
+
+        self.user_inputs = parsed_dict
+        return True, [], warnings
+
+    def get_data(self, window_size: int = 150, sample_idx: Optional[int] = None) -> Tuple[pd.DataFrame, pd.Series, Dict[str, Any]]:
+        """
+        Synthesizes a complete, feature-engineered telemetry dataset from partial inputs.
+        Omitted channels are imputed with verified nominal baselines and labeled as assumed.
+        """
+        user_provided: List[str] = []
+        derived: List[str] = []
+        assumed: List[str] = []
+
+        # Temperature
+        if "Temperature" in self.user_inputs:
+            temp = float(self.user_inputs["Temperature"])
+            user_provided.append("Temperature")
+        else:
+            temp = self.NOMINAL_BASELINE["Temperature"]
+            assumed.append("Temperature")
+
+        # Supply rails
+        if "VCCINT" in self.user_inputs:
+            vccint = float(self.user_inputs["VCCINT"])
+            user_provided.append("VCCINT")
+        else:
+            vccint = self.NOMINAL_BASELINE["VCCINT"]
+            assumed.append("VCCINT")
+
+        if "VCCAUX" in self.user_inputs:
+            vccaux = float(self.user_inputs["VCCAUX"])
+            user_provided.append("VCCAUX")
+        else:
+            vccaux = self.NOMINAL_BASELINE["VCCAUX"]
+            assumed.append("VCCAUX")
+
+        if "VCCBRAM" in self.user_inputs:
+            vccbram = float(self.user_inputs["VCCBRAM"])
+            user_provided.append("VCCBRAM")
+        else:
+            vccbram = self.NOMINAL_BASELINE["VCCBRAM"]
+            assumed.append("VCCBRAM")
+
+        # Ring Oscillator Frequency & Delay
+        if "RO_Frequency" in self.user_inputs:
+            ro_freq = float(self.user_inputs["RO_Frequency"])
+            ro_delay = calculate_ro_delay_ns(ro_freq, stages=RO_STAGES)
+            user_provided.append("RO_Frequency")
+            derived.append("RO_Delay_ns")
+        else:
+            ro_freq = self.NOMINAL_BASELINE["RO_Frequency"]
+            ro_delay = self.NOMINAL_BASELINE["RO_Delay_ns"]
+            assumed.append("RO_Frequency")
+            assumed.append("RO_Delay_ns")
+
+        # Error Rate
+        if "Error_Rate" in self.user_inputs:
+            err_rate = float(self.user_inputs["Error_Rate"])
+            user_provided.append("Error_Rate")
+        else:
+            err_rate = self.NOMINAL_BASELINE["Error_Rate"]
+            assumed.append("Error_Rate")
+
+        current_frame = {
+            "Timestamp": time.time(),
+            "Temperature": round(temp, 4),
+            "VCCINT": round(vccint, 4),
+            "VCCAUX": round(vccaux, 4),
+            "VCCBRAM": round(vccbram, 4),
+            "RO_Frequency": round(ro_freq, 4),
+            "RO_Delay_ns": round(ro_delay, 4),
+            "Error_Rate": round(err_rate, 6)
+        }
+
+        # Build steady-state rolling buffer of length window_size
+        buf_len = max(30, window_size)
+        buffer_data = [dict(current_frame) for _ in range(buf_len)]
+        raw_df = pd.DataFrame(buffer_data)
+
+        # Feature engineering creates delta and rolling stats smoothly
+        engineered_df = create_features(raw_df)
+
+        history_df = engineered_df.tail(window_size).copy()
+        latest_sample = engineered_df.iloc[-1].copy()
+
+        # Compute completeness and reliability metrics
+        completeness_count = len(user_provided)
+        completeness_ratio = round(completeness_count / 6.0, 2)
+        reliability_score = round(sum(self.CHANNEL_WEIGHTS.get(c, 0.0) for c in user_provided), 2)
+
+        # Build provenance map
+        prov_map = {
+            c: ("USER_PROVIDED" if c in user_provided else "ASSUMED_BASELINE")
+            for c in ["Temperature", "VCCINT", "VCCAUX", "VCCBRAM", "RO_Frequency", "Error_Rate"]
+        }
+        prov_map["RO_Delay_ns"] = "DERIVED" if "RO_Frequency" in user_provided else "ASSUMED_BASELINE"
+
+        eng_assessment = evaluate_engineering_limits(current_frame, provenance_map=prov_map)
+
+        metadata = {
+            "source_type": "ESTIMATED",
+            "source_label": "ESTIMATED / USER PROVIDED",
+            "total_samples": 1,
+            "current_index": 0,
+            "baseline": dict(self.NOMINAL_BASELINE),
+            "completeness_count": completeness_count,
+            "completeness_str": f"{completeness_count} / 6",
+            "completeness_ratio": completeness_ratio,
+            "reliability_score": reliability_score,
+            "user_provided": user_provided,
+            "derived": derived,
+            "assumed": assumed,
+            "raw_inputs": dict(self.user_inputs),
+            "channel_status": {
+                c: ("USER_PROVIDED" if c in user_provided else "ASSUMED_BASELINE")
+                for c in ["Temperature", "VCCINT", "VCCAUX", "VCCBRAM", "RO_Frequency", "Error_Rate"]
+            },
+            "provenance": prov_map,
+            "engineering_assessment": eng_assessment.to_dict()
+        }
+
+        return history_df, latest_sample, metadata
+
+    def reset(self):
+        """Clears all user inputs to initial empty state."""
+        self.user_inputs.clear()

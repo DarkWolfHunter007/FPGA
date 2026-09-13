@@ -11,14 +11,27 @@ from typing import Dict, Any, List
 import pandas as pd
 import streamlit as st
 
-from dashboard.config import SENSOR_CONFIG, HEALTH_COLORS, STATUS_BG_COLORS, DEVICE_NAME, RO_STAGES
+from dashboard.config import (
+    SENSOR_CONFIG,
+    HEALTH_COLORS,
+    STATUS_BG_COLORS,
+    DEVICE_NAME,
+    RO_STAGES,
+    evaluate_single_channel,
+    LimitSeverity
+)
 from dashboard.styles import get_fpga_chip_svg, render_primary_health_card, render_measurement_card
 
 
 def render_header(status_label: str = "ACTIVE", source_label: str = "MOCK DATA", platform: str = DEVICE_NAME):
     """Renders the top centered FPGA research banner with inline SVG chip."""
     chip_svg = get_fpga_chip_svg(size=90)
-    badge_source_class = "badge-mock" if "MOCK" in source_label.upper() else "badge-live"
+    if "ESTIMATED" in source_label.upper():
+        badge_source_class = "badge-estimated"
+    elif "MOCK" in source_label.upper():
+        badge_source_class = "badge-mock"
+    else:
+        badge_source_class = "badge-live"
 
     html = textwrap.dedent(f"""
 <div class="header-box">
@@ -353,10 +366,75 @@ def render_baseline_comparison(latest: pd.Series, baseline: Dict[str, float]):
     st.dataframe(df_comp, width="stretch", hide_index=True)
 
 
-def render_sensor_status_table(latest: pd.Series, history_df: pd.DataFrame):
+def render_engineering_override_alert(
+    final_health_dict: Dict[str, Any]
+):
     """
-    Section 7: Current Sensor Status Table with Centralized Config Thresholds and Trends.
+    Renders a prominent high-visibility laboratory callout when a hard physical or
+    engineering operating limit overrides the Random Forest ML prediction.
     """
+    override_applied = final_health_dict.get("override_applied", False)
+    if not override_applied:
+        return
+
+    ml_pred = final_health_dict.get("ml_prediction", "Healthy")
+    ml_conf = final_health_dict.get("ml_confidence", 0.95)
+    final_health = final_health_dict.get("final_health", "Degraded")
+    title = final_health_dict.get("override_title", "HARD ENGINEERING LIMIT OVERRIDE")
+    explanation = final_health_dict.get("override_explanation", "")
+
+    state_color = HEALTH_COLORS.get(final_health, "#FF1744")
+
+    html = textwrap.dedent(f"""
+    <div style="background: linear-gradient(135deg, rgba(255, 23, 68, 0.15), rgba(17, 24, 39, 0.95)); border: 2px solid {state_color}; border-radius: 10px; padding: 18px 22px; margin: 16px 0 20px 0; box-shadow: 0 4px 20px rgba(255, 23, 68, 0.2);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 1.4rem;">⚠️</span>
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 0.95rem; font-weight: 800; color: {state_color}; text-transform: uppercase; letter-spacing: 0.5px;">
+                    {title}
+                </span>
+            </div>
+            <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; background: rgba(255,255,255,0.08); padding: 4px 10px; border-radius: 4px; color: #CBD5E1;">
+                PRECEDENCE: HARD PHYSICAL / OPERATING BOUNDS > ML PREDICTION
+            </div>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 12px 0; background: rgba(0,0,0,0.25); padding: 12px; border-radius: 6px;">
+            <div>
+                <div style="font-size: 0.75rem; color: #94A3B8; text-transform: uppercase; font-family: 'JetBrains Mono', monospace;">1. Random Forest ML Output</div>
+                <div style="font-size: 1.15rem; font-weight: 700; color: #F8FAFC; margin-top: 2px;">
+                    {ml_pred.upper()} <span style="font-size: 0.85rem; color: #00E5FF; font-weight: 600;">({ml_conf * 100:.1f}% confidence)</span>
+                </div>
+            </div>
+            <div>
+                <div style="font-size: 0.75rem; color: #94A3B8; text-transform: uppercase; font-family: 'JetBrains Mono', monospace;">2. Final Engineering Assessment</div>
+                <div style="font-size: 1.15rem; font-weight: 800; color: {state_color}; margin-top: 2px;">
+                    {final_health.upper()} <span style="font-size: 0.85rem; color: #FCA5A5; font-weight: 600;">(Safety Override Applied)</span>
+                </div>
+            </div>
+        </div>
+
+        <div style="font-size: 0.88rem; color: #E2E8F0; line-height: 1.5; margin-top: 8px;">
+            <strong>Root Cause of Override:</strong> {explanation}
+        </div>
+        <div style="font-size: 0.78rem; color: #94A3B8; margin-top: 6px; font-style: italic;">
+            *Notice: The machine-learning model predicts probability distributions based on training features. When physical or engineering operating limits are violated, deterministic engineering constraints take absolute precedence.*
+        </div>
+    </div>
+    """).strip()
+    st.html(html)
+
+
+def render_sensor_status_table(
+    latest: pd.Series,
+    history_df: pd.DataFrame,
+    provenance_map: Optional[Dict[str, str]] = None
+):
+    """
+    Section 7: Current Sensor Status Table with Centralized Operating Ranges,
+    Physical Limits, Evaluation Status, and Provenance.
+    """
+    provenance_map = provenance_map or {}
     rows = []
 
     def get_trend_str(series: pd.Series) -> str:
@@ -375,41 +453,18 @@ def render_sensor_status_table(latest: pd.Series, history_df: pd.DataFrame):
             continue
         val = latest[param]
         trend = get_trend_str(history_df[param]) if param in history_df.columns else "→ Stable"
+        prov = provenance_map.get(param, "MEASURED")
 
-        status = "NORMAL"
-        if param == "Temperature":
-            if val >= cfg["critical"]:
-                status = "CRITICAL (HIGH)"
-            elif val >= cfg["warning"]:
-                status = "WARNING (ELEVATED)"
-        elif param == "RO_Frequency":
-            nom = cfg["nominal"]
-            drop_pct = ((nom - val) / nom) * 100.0
-            if drop_pct >= cfg["critical_drop_pct"]:
-                status = "CRITICAL (DEGRADED)"
-            elif drop_pct >= cfg["warning_drop_pct"]:
-                status = "WARNING (SHIFTED)"
-        elif param == "RO_Delay_ns":
-            nom = cfg["nominal"]
-            inc_pct = ((val - nom) / nom) * 100.0
-            if inc_pct >= cfg["critical_increase_pct"]:
-                status = "CRITICAL (SLOWED)"
-            elif inc_pct >= cfg["warning_increase_pct"]:
-                status = "WARNING (DRIFT)"
-        elif param == "Error_Rate":
-            if val >= cfg["critical"]:
-                status = "CRITICAL (HIGH)"
-            elif val >= cfg["warning"]:
-                status = "ELEVATED"
-        elif "min_nominal" in cfg and "max_nominal" in cfg:
-            if not (cfg["min_nominal"] <= val <= cfg["max_nominal"]):
-                status = "OUT OF TOLERANCE"
+        # Three-tier evaluation
+        eval_res = evaluate_single_channel(param, val, provenance=prov)
 
         rows.append({
-            "Parameter Channel": cfg["display_name"],
+            "Sensor Channel": cfg["display_name"],
             "Current Reading": f"{val:.4f} {cfg['unit']}".strip(),
-            "Nominal Value": f"{cfg['nominal']:.4f} {cfg['unit']}".strip(),
-            "Status Evaluation": status,
+            "Nominal Benchmark": f"{cfg['nominal']:.4f} {cfg['unit']}".strip(),
+            "Operating Health Range": eval_res.operating_range_str,
+            "Status Evaluation": eval_res.status_label,
+            "Provenance": prov,
             "Temporal Trend": trend
         })
 
@@ -518,3 +573,279 @@ def render_life_extension_section(agent_res: Dict[str, Any]):
     st.caption(
         "💡 *Notice: Recommendations are based on accelerated silicon aging principles (e.g. Arrhenius thermal acceleration, BTI, and dynamic power scaling) and serve to guide operational optimization.*"
     )
+
+
+def render_estimated_input_breakdown(meta: Dict[str, Any], latest: pd.Series):
+    """
+    Renders the transparency and provenance breakdown for Estimated Health Assessment:
+    - Input Completeness (X / 6 channels supplied)
+    - Assessment Reliability Score
+    - Breakdown of User-Provided, Physically Derived, and Assumed Nominal Baselines.
+    """
+    user_provided = meta.get("user_provided", [])
+    derived = meta.get("derived", [])
+    assumed = meta.get("assumed", [])
+    comp_str = meta.get("completeness_str", f"{len(user_provided)} / 6")
+    rel_score = meta.get("reliability_score", 0.0)
+
+    # Completeness badge color
+    comp_pct = (len(user_provided) / 6.0) * 100.0
+    comp_color = "#00E676" if comp_pct >= 80 else ("#FFD600" if comp_pct >= 50 else "#FF9100")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.html(
+            render_primary_health_card(
+                title="Input Completeness",
+                value=comp_str,
+                subtext=f"{comp_pct:.0f}% of Sensor Channels Provided",
+                state_color=comp_color,
+                bg_color="rgba(0, 229, 255, 0.10)"
+            )
+        )
+    with c2:
+        rel_color = "#00E676" if rel_score >= 0.70 else ("#FFD600" if rel_score >= 0.40 else "#FF9100")
+        st.html(
+            render_primary_health_card(
+                title="Assessment Reliability",
+                value=f"{rel_score * 100:.0f} %",
+                subtext="Diagnostic Telemetry Coverage Weight",
+                state_color=rel_color,
+                bg_color="rgba(168, 85, 247, 0.12)"
+            )
+        )
+
+    # Detailed channel breakdown list
+    rows = []
+    
+    # 1. User provided channels
+    for ch in user_provided:
+        cfg = SENSOR_CONFIG.get(ch, {})
+        val = latest.get(ch, 0.0)
+        unit = cfg.get("unit", "")
+        rows.append({
+            "Sensor Channel": cfg.get("display_name", ch),
+            "Value": f"{val:.4f} {unit}".strip(),
+            "Provenance / Classification": "✅ User Provided (Operator Input)",
+            "Methodology": "Direct Manual Input"
+        })
+
+    # 2. Derived channels
+    for ch in derived:
+        cfg = SENSOR_CONFIG.get(ch, {})
+        val = latest.get(ch, 0.0)
+        unit = cfg.get("unit", "")
+        rows.append({
+            "Sensor Channel": cfg.get("display_name", ch),
+            "Value": f"{val:.4f} {unit}".strip(),
+            "Provenance / Classification": "⚡ Physically Derived (τ = 100 / f_MHz)",
+            "Methodology": "Deterministic Physical Formula (N=5 stages)"
+        })
+
+    # 3. Assumed nominal baseline channels
+    for ch in assumed:
+        if ch in derived:
+            continue
+        cfg = SENSOR_CONFIG.get(ch, {})
+        val = latest.get(ch, 0.0)
+        unit = cfg.get("unit", "")
+        rows.append({
+            "Sensor Channel": cfg.get("display_name", ch),
+            "Value": f"{val:.4f} {unit}".strip(),
+            "Provenance / Classification": "⚠️ Assumed Nominal Baseline",
+            "Methodology": f"Imputed Nominal Benchmark (nom: {cfg.get('nominal', 0.0)} {unit})"
+        })
+
+    df_prov = pd.DataFrame(rows)
+    st.dataframe(df_prov, width="stretch", hide_index=True)
+
+    st.caption(
+        "⚠️ **Estimation Notice:** Unsupplied telemetry channels are imputed using verified nominal Artix-7 physical baselines. "
+        "Estimated assessments provide diagnostic guidance under partial data and do not substitute for direct hardware logging."
+    )
+
+
+def render_estimated_stress_index(stress_index: float, state_name: str):
+    """
+    Renders the continuous Estimated Health Stress Index.
+    Clearly distinguishes stress score from physical silicon lifetime consumption.
+    """
+    if stress_index >= 0.75:
+        stress_label = "High Stress / Elevated Wear"
+        stress_color = HEALTH_COLORS["Degraded"]
+    elif stress_index >= 0.40:
+        stress_label = "Moderate Stress / Transitional"
+        stress_color = HEALTH_COLORS["Warning"]
+    else:
+        stress_label = "Low Stress / Nominal"
+        stress_color = HEALTH_COLORS["Healthy"]
+
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        st.html(f"""
+        <div style="background: #111827; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 16px;">
+            <div style="font-size: 0.8rem; color: #94A3B8; text-transform: uppercase; font-family: 'JetBrains Mono', monospace; margin-bottom: 4px;">
+                Estimated Degradation / Health Stress Index
+            </div>
+            <div style="font-size: 2.1rem; font-weight: 800; color: {stress_color}; font-family: 'JetBrains Mono', monospace; margin-bottom: 6px;">
+                {stress_index:.3f} <span style="font-size: 1.1rem; color: #94A3B8;">/ 1.000</span>
+            </div>
+            <div style="font-size: 0.85rem; color: {stress_color}; font-weight: 600;">
+                Category: {stress_label}
+            </div>
+        </div>
+        """)
+    with c2:
+        st.html(f"""
+        <div style="background: #0F172A; border-left: 3px solid #00E5FF; border-radius: 0 8px 8px 0; padding: 14px 16px; font-size: 0.84rem; color: #CBD5E1; line-height: 1.45;">
+            <strong>Scientific Methodology Note:</strong><br>
+            The <em>Estimated Health Stress Index</em> reflects aggregate multi-domain stress computed from thermal, timing drift, and error rate parameters.
+            It provides a comparative operational risk score and does <strong>not</strong> represent an absolute measured percentage of consumed silicon lifetime.
+        </div>
+        """)
+
+
+def render_hardware_connection_panel(meta: Dict[str, Any]):
+    """
+    Renders the hardware UART connection status and diagnostics for the Basys 3 board.
+    Displays live link state, packet metrics, and field-level telemetry provenance.
+    """
+    diag = meta.get("diagnostics", {})
+    state = diag.get("state", "DISCONNECTED")
+    port = diag.get("port", "COM3")
+    baud = diag.get("baudrate", 115200)
+    pkt_count = diag.get("packet_count", 0)
+    err_count = diag.get("error_count", 0)
+    rate_hz = diag.get("packet_rate_hz", 0.0)
+    handshake = diag.get("handshake_detected", False)
+    sec_since = diag.get("seconds_since_last_packet")
+    last_err = diag.get("last_error_msg", "")
+
+    if state == "RECEIVING_TELEMETRY":
+        state_label = "STREAMING LIVE TELEMETRY"
+        state_color = "#00E676"
+        state_bg = "rgba(0, 230, 118, 0.12)"
+    elif state == "CONNECTED":
+        state_label = "CONNECTED (WAITING FOR FRAMES)"
+        state_color = "#00E5FF"
+        state_bg = "rgba(0, 229, 255, 0.12)"
+    elif state == "STALE_DATA":
+        state_label = f"STALE DATA ({sec_since:.1f}s SINCE LAST PACKET)"
+        state_color = "#FF9100"
+        state_bg = "rgba(255, 145, 0, 0.12)"
+    elif state == "CONNECTING":
+        state_label = "OPENING SERIAL PORT..."
+        state_color = "#FFD600"
+        state_bg = "rgba(255, 214, 0, 0.12)"
+    elif state == "ERROR":
+        state_label = f"ERROR: {last_err[:40]}" if last_err else "CONNECTION ERROR"
+        state_color = "#FF5252"
+        state_bg = "rgba(255, 82, 82, 0.12)"
+    else:
+        state_label = "DISCONNECTED (STANDBY)"
+        state_color = "#94A3B8"
+        state_bg = "rgba(148, 163, 184, 0.10)"
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.html(
+            render_primary_health_card(
+                title="Hardware Link State",
+                value=state.replace("_", " "),
+                subtext=state_label,
+                state_color=state_color,
+                bg_color=state_bg
+            )
+        )
+    with c2:
+        st.html(
+            render_primary_health_card(
+                title="Physical Interface",
+                value=port,
+                subtext=f"{baud} 8N1 UART Serial",
+                state_color="#00E5FF",
+                bg_color="rgba(0, 229, 255, 0.12)"
+            )
+        )
+    with c3:
+        st.html(
+            render_primary_health_card(
+                title="Telemetry Packets",
+                value=f"#{pkt_count}",
+                subtext=f"Stream Rate: {rate_hz:.1f} Hz (Errors: {err_count})",
+                state_color="#00E676" if err_count == 0 else "#FF9100",
+                bg_color="rgba(0, 230, 118, 0.10)"
+            )
+        )
+    with c4:
+        hs_text = "Verified (HELLO FPGA)" if handshake else "JSON Telemetry Stream"
+        hs_color = "#00E676" if handshake else "#94A3B8"
+        st.html(
+            render_primary_health_card(
+                title="FPGA Handshake",
+                value="ONLINE" if handshake or pkt_count > 0 else "OFFLINE",
+                subtext=hs_text,
+                state_color=hs_color,
+                bg_color="rgba(168, 85, 247, 0.12)"
+            )
+        )
+
+    # Hardware provenance breakdown
+    prov_rows = [
+        {"Channel": "Die Temperature", "Provenance": "🟢 MEASURED (Physical On-Chip)", "Source": "7-Series XADC (DRP 0x00)"},
+        {"Channel": "VCCINT Core Voltage", "Provenance": "🟢 MEASURED (Physical On-Chip)", "Source": "7-Series XADC (DRP 0x01)"},
+        {"Channel": "VCCAUX Aux Voltage", "Provenance": "🟢 MEASURED (Physical On-Chip)", "Source": "7-Series XADC (DRP 0x02)"},
+        {"Channel": "VCCBRAM RAM Voltage", "Provenance": "🟢 MEASURED (Physical On-Chip)", "Source": "7-Series XADC (DRP 0x06)"},
+        {"Channel": "RO Frequency", "Provenance": "🟢 MEASURED (Physical On-Chip)", "Source": "5-Stage Ring Oscillator + 10ms Gated Counter"},
+        {"Channel": "RO Stage Delay", "Provenance": "⚡ DERIVED (Mathematical Formula)", "Source": "tau = 1000 / (2 * 5 * f_MHz) = 100 / f_MHz"},
+        {"Channel": "Functional Error Rate", "Provenance": "🟢 MEASURED (Physical On-Chip)", "Source": "PRBS-7 Hardware LFSR Pattern Checker"}
+    ]
+    df_prov = pd.DataFrame(prov_rows)
+    st.dataframe(df_prov, width="stretch", hide_index=True)
+
+
+def render_hardware_vs_estimated_comparison(
+    hw_latest: pd.Series,
+    est_inputs: Dict[str, Any],
+    hw_pred: str,
+    est_pred: str
+):
+    """
+    Renders side-by-side comparison between real Basys 3 hardware telemetry
+    and manual / estimated health assessment inputs.
+    """
+    rows = []
+    channels = [
+        ("Temperature", "Die Temperature", "°C"),
+        ("VCCINT", "VCCINT Core Voltage", "V"),
+        ("VCCAUX", "VCCAUX Aux Voltage", "V"),
+        ("VCCBRAM", "VCCBRAM RAM Voltage", "V"),
+        ("RO_Frequency", "Ring Oscillator Frequency", "MHz"),
+        ("RO_Delay_ns", "Derived RO Stage Delay", "ns/stage"),
+        ("Error_Rate", "Functional Error Rate", "")
+    ]
+
+    for key, name, unit in channels:
+        hw_val = hw_latest.get(key, None)
+        hw_str = f"{hw_val:.4f} {unit}".strip() if hw_val is not None else "N/A"
+
+        est_val = est_inputs.get(key, None)
+        if est_val is not None and str(est_val).strip() != "":
+            try:
+                est_float = float(est_val)
+                est_str = f"{est_float:.4f} {unit}".strip()
+            except ValueError:
+                est_str = str(est_val)
+        else:
+            est_str = "Nominal Imputed"
+
+        rows.append({
+            "Sensor Channel": name,
+            "Basys 3 Hardware (Live UART)": hw_str,
+            "Estimated / Manual Input": est_str,
+            "Agreement": "Aligned" if hw_str == est_str else "Variance"
+        })
+
+    comp_df = pd.DataFrame(rows)
+    st.dataframe(comp_df, width="stretch", hide_index=True)
+

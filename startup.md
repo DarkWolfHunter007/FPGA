@@ -17,6 +17,7 @@ graph TD
         A1[Mock CSV Dataset] --> S[Telemetry Provider Interface]
         A2[Physics-Based Live Simulator] --> S
         A3[Physical FPGA UART Stream] --> S
+        A4[Estimated User Inputs] --> S
     end
 
     subgraph Data & Feature Pipeline
@@ -26,7 +27,7 @@ graph TD
 
     subgraph Intelligence Layer
         F --> ML[Random Forest Classifier<br/>Health State + Confidence]
-        ML --> LG[LangGraph Diagnostic Agent<br/>Root Cause, Risk & Life Extension]
+        ML --> LG[Diagnostic Reasoning Agent<br/>Root Cause, Risk & Life Extension]
         C --> LG
     end
 
@@ -38,6 +39,7 @@ graph TD
         UI --> M2[5x5 Virtual Logic Health Matrix]
         UI --> M3[7 Independent Telemetry Charts]
         UI --> M4[Actionable PHM Advisory Panel]
+        UI --> M5[Estimated Provenance Breakdown]
     end
 ```
 
@@ -112,13 +114,85 @@ The application will launch in your default web browser at:
 
 ## 🎛️ Operating Modes in Dashboard
 
-In the left sidebar under **Data Stream Source**, select from three operating modes:
+In the left sidebar under **Select Telemetry Source**, select from four operating modes:
 
 | Mode | Description | Primary Use Case |
 | :--- | :--- | :--- |
 | **Mock Dataset (CSV)** | Replays sequential historical degradation data with step-by-step slider navigation. | Offline analysis, model validation, and demonstration. |
-| **Live Simulation** | Generates real-time synthetic physics telemetry with continuous time-series streaming. | UI testing and dynamic multi-parameter response simulation without hardware. |
-| **Live Hardware (UART)** | Connects directly to the physical FPGA board over a USB-to-UART serial COM port (115200 baud). | Production monitoring on physical hardware (e.g., Digilent Basys 3). |
+| **Live Simulation** | Generates real-time synthetic physics telemetry with continuous time-series streaming. | Dynamic multi-parameter response simulation without hardware. |
+| **Physical UART Stream** | Connects directly to the physical FPGA board over a USB-to-UART serial COM port (115200 baud). | Production monitoring on physical hardware (e.g., Digilent Basys 3). |
+| **Estimated Health Assessment** | Allows operators to manually input 1 to 6 available telemetry parameters. Unsupplied channels are imputed with verified nominal baselines. | Offline diagnostic estimations and partial telemetry analysis without active board connection. |
+
+### 🔍 Estimated Health Assessment Methodology
+- **Provenance Tracking**: Distinguishes **User-Provided** values, **Physically Derived** metrics ($\tau = 100 / f_{\text{MHz}}$), and **Assumed Nominal Baselines**.
+- **Missing Value Handling**: Unsupplied channels default to verified Artix-7 nominal baselines ($T = 35.0^\circ\text{C}$, $\text{VCCINT} = 1.0\text{V}$, $\text{VCCAUX} = 1.8\text{V}$, $\text{VCCBRAM} = 1.0\text{V}$, $f_{\text{RO}} = 250.0\text{MHz}$, $\text{Error} = 0.00001$).
+- **Input Completeness & Reliability**: Reports input completeness ($k / 6$) and diagnostic coverage weight separately from the ML softmax classification probability.
+- **Estimated Health Stress Index**: Provides a continuous multi-domain operational risk score ($0.0$ to $1.0$) distinct from physical silicon lifetime consumption.
+
+---
+
+## 🛡️ Engineering Operating Limits & Safety Architecture
+
+The system incorporates a **Deterministic Safety Envelope** that guarantees machine learning predictions never violate physical hardware boundaries or operating limits:
+
+### Three-Tier Validation Architecture
+
+```
+                                  TELEMETRY INPUT
+                                         │
+                 ┌───────────────────────▼───────────────────────┐
+                 │ 1. INPUT VALIDITY (Syntax & Type Checking)    │
+                 │    - Checks numeric parsability (e.g. "abc")  │
+                 └───────────────────────┬───────────────────────┘
+                                         │ Valid
+                 ┌───────────────────────▼───────────────────────┐
+                 │ 2. PHYSICAL VALIDITY (Sensor Bound Plausibility)
+                 │    - Validates hardware limits (-40°C to 125°C)│
+                 └───────────────────────┬───────────────────────┘
+                                         │ Plausible
+                 ┌───────────────────────▼───────────────────────┐
+                 │ 3. OPERATING HEALTH RANGE & HARD LIMITS       │
+                 │    - Evaluates safe operating envelope        │
+                 └───────────────────────┬───────────────────────┘
+                                         │
+                    ┌────────────────────┴────────────────────┐
+                    ▼                                         ▼
+   ┌─────────────────────────────────┐       ┌─────────────────────────────────┐
+   │    Machine Learning Model       │       │    Engineering Limit Engine     │
+   │  - Random Forest Classification │       │  - Deterministic Safety Rules   │
+   │  - Softmax Probability Output   │       │  - Xilinx DS181 Operating Range │
+   └────────────────┬────────────────┘       └────────────────┬────────────────┘
+                    │                                         │
+                    └────────────────────┬────────────────────┘
+                                         │
+                 ┌───────────────────────▼───────────────────────┐
+                 │  DETERMINISTIC HEALTH RESOLUTION ENGINE       │
+                 │  - Precedence: Engineering Limit > ML Output  │
+                 │  - Displays dual ML + Final Health state      │
+                 └───────────────────────┬───────────────────────┘
+                                         ▼
+                            LANGGRAPH DIAGNOSTIC AGENT
+                                         ▼
+                            STREAMLIT RESEARCH DASHBOARD
+```
+
+### Centralized Sensor Bounds & Engineering Limits
+
+| Sensor Channel | Unit | Nominal | Physical Bounds | Operating Health Range | Hard Safety Limit | Primary Specification Source |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Temperature** | °C | 35.0 | $[-40.0, 125.0]$ | $[20.0, 45.0]$ | $\le 0.0$ (Freeze) or $\ge 52.0$ | Xilinx DS181 & Thermal Aging Model |
+| **VCCINT** | V | 1.000 | $[0.000, 2.000]$ | $[0.950, 1.050]$ | $< 0.920$ or $> 1.080$ | Xilinx DS181 Recommended Operating (1.0V $\pm 5\%$) |
+| **VCCAUX** | V | 1.800 | $[0.000, 3.000]$ | $[1.710, 1.890]$ | $< 1.650$ or $> 1.950$ | Xilinx DS181 Recommended Operating (1.8V $\pm 5\%$) |
+| **VCCBRAM** | V | 1.000 | $[0.000, 2.000]$ | $[0.950, 1.050]$ | $< 0.920$ or $> 1.080$ | Xilinx DS181 Recommended Operating (1.0V $\pm 5\%$) |
+| **RO Frequency** | MHz | 250.0 | $[10.0, 500.0]$ | $[245.0, 255.0]$ | $< 238.0$ (Severe Aging) or $> 265.0$ | 28nm BTI/HCI Physical Degradation Model |
+| **Derived RO Delay** | ns | 0.4000 | $[0.100, 2.500]$ | $[0.3920, 0.4082]$ | $> 0.4202$ or $< 0.3770$ | Deterministic Physical Formula ($\tau = 100 / f$) |
+| **Error Rate** | — | 0.000010 | $[0.0, 1.0]$ | $[0.0, 0.000500]$ | $> 0.002000$ (Functional fault) | Hardware PRBS-7 Monitor Engineering Assumption |
+
+### Dual Health Display & Transparency
+When an operating limit is breached (e.g., $T = 0.0^\circ\text{C}$ or $\text{VCCINT} = 0.2\text{V}$), the dashboard renders:
+1. **Raw ML Output**: Shows original Random Forest class and confidence (e.g. `Healthy (92%)`).
+2. **Final Engineering Assessment**: Highlights the hard limit override (e.g. `DEGRADED / CRITICAL — HARD OPERATING LIMIT OVERRIDE`).
+3. **Root Cause Explanation**: Clear physical rationale for why the engineering limit took precedence.
 
 ---
 
@@ -128,24 +202,35 @@ In the left sidebar under **Data Stream Source**, select from three operating mo
 
 Ring Oscillator frequency drops as logic transistors age due to BTI/HCI threshold shifts. The physical propagation delay per logic stage $\tau$ is calculated as:
 
-$$\tau = \frac{1000}{2 \cdot N \cdot f_{\text{MHz}}} \quad \text{[ns / stage]}$$
+$$\tau = \frac{1000}{2 \cdot N \cdot f_{\text{MHz}}} = \frac{100}{f_{\text{MHz}}} \quad \text{[ns / stage]} \quad (N = 5\text{ stages})$$
 
-Where:
-- $N = 5$ (Number of internal inverter stages in the ring)
-- $f_{\text{MHz}}$ = Ring Oscillator oscillating frequency in $\text{MHz}$
-- **Nominal Reference**: $250.0\text{ MHz} \implies \tau = 0.4000\text{ ns/stage}$
+- **$250.0\text{ MHz}$** $\implies \tau = 0.4000\text{ ns/stage}$ (Nominal baseline)
+- **$240.0\text{ MHz}$** $\implies \tau = 0.4167\text{ ns/stage}$ (Moderate drift)
+- **$235.0\text{ MHz}$** $\implies \tau = 0.4255\text{ ns/stage}$ (Degraded state)
 
 ---
 
 ## 🧪 Verification & Health Checks
 
-You can run individual verification tests on the core modules:
+You can run automated verification tests across all data sources, hardware communication, and ML components:
 
 ```powershell
+# Run Complete Test Suite (38 tests across Limits, Estimated Health, and UART Hardware)
+python -m unittest discover tests
+
+# Run Engineering Operating Limits Test Suite (14 tests)
+python -m unittest tests/test_engineering_limits.py
+
+# Run UART Hardware Interface Test Suite (11 tests)
+python -m unittest tests/test_uart_hardware.py
+
+# Run Estimated Health Assessment Test Suite (13 tests)
+python -m unittest tests/test_estimated_health.py
+
 # Test ML Prediction Engine
 python -m ml.predict
 
-# Test LangGraph Diagnostic & Advisory Agent
+# Test Diagnostic & Advisory Agent
 python -m agent.langgraph_agent
 
 # Test UART Receiver & Port Detection
@@ -159,21 +244,36 @@ python communication/uart_receiver.py
 ```text
 FPGA/
 ├── agent/
-│   └── langgraph_agent.py      # LangGraph diagnostic & life-extension agent
+│   └── langgraph_agent.py      # Diagnostic reasoning & life-extension advisory agent
 ├── communication/
-│   └── uart_receiver.py        # Serial/UART telemetry communication receiver
+│   └── uart_receiver.py        # Serial/UART telemetry communication receiver (state machine)
 ├── config.py                   # Global hardware & physical constants (RO_STAGES, formulas)
 ├── dashboard/
 │   ├── app.py                  # Main Streamlit dashboard application
 │   ├── charts.py               # Altair telemetry trend charts (independent axes)
 │   ├── components.py           # HTML/CSS KPI cards, baseline tables, advisory cards
 │   ├── config.py               # Dashboard sensor bounds, baselines & threshold rules
-│   ├── data_source.py          # Unified data source abstraction (CSV, Sim, UART)
+│   ├── data_source.py          # Unified data source abstraction (CSV, Sim, UART, Estimated)
 │   ├── health_map.py           # 5x5 Virtual Logic Health Matrix generator
 │   └── styles.py               # Laboratory dark-theme embedded CSS
 ├── data/
 │   └── raw/
 │       └── mock_fpga_data.csv  # 10,000-sample synthetic degradation dataset
+├── hardware/
+│   ├── constraints/
+│   │   └── basys3.xdc          # Master XDC pinouts & timing constraints for Basys 3
+│   ├── rtl/
+│   │   ├── error_rate_monitor.v    # PRBS-7 functional error rate monitor
+│   │   ├── fpga_health_top.v       # Top-level interconnect & on-board LED diagnostics
+│   │   ├── frequency_counter.v     # 10ms gated CDC frequency counter
+│   │   ├── packet_formatter.v      # ASCII JSON & handshake serializer
+│   │   ├── ring_oscillator.v       # 5-stage RO aging sensor (DONT_TOUCH protected)
+│   │   ├── uart_tx.v               # 115200 baud UART serializer at 100MHz clock
+│   │   └── xadc_sensor_reader.v    # 7-Series XADC DRP 4-channel sequencer
+│   ├── vivado/
+│   │   ├── build_bitstream.tcl     # Batch synthesis & implementation build script
+│   │   └── program_fpga.tcl        # Hardware Manager programming script
+│   └── README.md                   # Full hardware build, synthesis & setup guide
 ├── ml/
 │   ├── feature_engineering.py  # Rolling stats & differential feature extraction
 │   ├── models/
@@ -182,6 +282,10 @@ FPGA/
 │   └── train_model.py          # ML training and evaluation script
 ├── mock/
 │   └── mock_fpga.py            # Offline synthetic degradation dataset generator
+├── tests/
+│   ├── test_engineering_limits.py # Engineering operating limits & override tests (14 tests)
+│   ├── test_estimated_health.py    # Estimated Health unit & integration tests (13 tests)
+│   └── test_uart_hardware.py       # Physical UART hardware interface tests (11 tests)
 ├── requirements.txt            # Python dependencies
 ├── startup.md                  # System startup & execution guide (this file)
 └── .gitignore                  # Git ignore rules for clean repository state

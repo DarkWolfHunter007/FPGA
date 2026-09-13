@@ -27,15 +27,20 @@ from dashboard.config import (
     ARCHITECTURE,
     HEALTH_COLORS,
     STATUS_BG_COLORS,
-    SENSOR_CONFIG
+    SENSOR_CONFIG,
+    evaluate_engineering_limits,
+    determine_final_health,
+    LimitSeverity
 )
 from dashboard.styles import get_custom_css
 from dashboard.data_source import (
     MockCSVDataSource,
     LiveSimulationDataSource,
     LiveUARTDataSource,
+    EstimatedDataSource,
     validate_and_clean_data
 )
+from communication.uart_receiver import FPGAUARTReceiver
 from dashboard.components import (
     render_header,
     render_primary_health_kpis,
@@ -44,7 +49,12 @@ from dashboard.components import (
     render_baseline_comparison,
     render_sensor_status_table,
     render_agent_recommendations_section,
-    render_life_extension_section
+    render_life_extension_section,
+    render_estimated_input_breakdown,
+    render_estimated_stress_index,
+    render_hardware_connection_panel,
+    render_hardware_vs_estimated_comparison,
+    render_engineering_override_alert
 )
 from dashboard.charts import (
     create_temperature_chart,
@@ -113,6 +123,20 @@ if "mock_source" not in st.session_state:
         st.session_state.mock_source = None
 if "uart_source" not in st.session_state:
     st.session_state.uart_source = LiveUARTDataSource(port="COM3")
+if "estimated_source" not in st.session_state:
+    st.session_state.estimated_source = EstimatedDataSource()
+if "est_temp" not in st.session_state:
+    st.session_state.est_temp = ""
+if "est_vccint" not in st.session_state:
+    st.session_state.est_vccint = ""
+if "est_vccaux" not in st.session_state:
+    st.session_state.est_vccaux = ""
+if "est_vccbram" not in st.session_state:
+    st.session_state.est_vccbram = ""
+if "est_ro_freq" not in st.session_state:
+    st.session_state.est_ro_freq = ""
+if "est_err_rate" not in st.session_state:
+    st.session_state.est_err_rate = ""
 
 
 # =============================================================================
@@ -123,8 +147,17 @@ with st.sidebar:
     
     data_mode = st.selectbox(
         "Select Telemetry Source",
-        ["Mock Dataset (CSV Replay)", "Dynamic Simulation Stream", "Physical UART Stream (Artix-7)"],
-        index=0 if st.session_state.data_mode == "Mock Dataset (CSV Replay)" else (1 if "Simulation" in st.session_state.data_mode else 2)
+        [
+            "Mock Dataset (CSV Replay)",
+            "Dynamic Simulation Stream",
+            "Physical UART Stream (Artix-7)",
+            "Estimated Health Assessment"
+        ],
+        index=0 if st.session_state.data_mode == "Mock Dataset (CSV Replay)" else (
+            1 if "Simulation" in st.session_state.data_mode else (
+                2 if "UART" in st.session_state.data_mode else 3
+            )
+        )
     )
     st.session_state.data_mode = data_mode
 
@@ -167,9 +200,19 @@ with st.sidebar:
             st.rerun()
 
     elif "Physical UART" in data_mode:
-        available_ports = LiveUARTDataSource.receiver.list_available_ports() if hasattr(LiveUARTDataSource, "receiver") else ["COM3"]
-        selected_port = st.selectbox("UART COM Port", available_ports, index=0)
+        st.markdown("#### 🔌 Basys 3 Hardware Interface")
+        available_ports = FPGAUARTReceiver.list_available_ports()
+
+        col_port, col_ref = st.columns([3, 1])
+        with col_port:
+            selected_port = st.selectbox("UART COM Port", available_ports, index=0)
+        with col_ref:
+            st.write("") # spacing
+            if st.button("🔄", help="Refresh available serial ports"):
+                st.rerun()
+
         st.session_state.uart_source.receiver.port = selected_port
+        st.caption(f"**Baud Rate**: 115200 8N1 | **Target**: {DEVICE_NAME}")
 
         col_u1, col_u2 = st.columns(2)
         with col_u1:
@@ -178,21 +221,101 @@ with st.sidebar:
                 if success:
                     st.success(f"Connected to {selected_port}")
                 else:
-                    st.warning("Hardware port unavailable; streaming in offline mock fallback.")
+                    err_txt = st.session_state.uart_source.receiver.last_error_msg or "Port unavailable"
+                    st.warning(f"Connection failed: {err_txt}")
+                st.rerun()
         with col_u2:
-            if st.button("Disconnect", width="stretch"):
+            if st.button("🛑 Disconnect", width="stretch"):
                 st.session_state.uart_source.disconnect()
                 st.info("Disconnected.")
+                st.rerun()
 
-    st.markdown("---")
-    st.markdown("### ⏱️ Live Auto-Refresh")
-    st.session_state.auto_refresh = st.toggle("Enable Live Auto-Poll", value=st.session_state.auto_refresh)
-    if st.session_state.auto_refresh:
-        st.session_state.refresh_rate = st.select_slider(
-            "Poll Interval (seconds)",
-            options=[1, 2, 5, 10],
-            value=st.session_state.refresh_rate
-        )
+    elif "Estimated" in data_mode:
+        st.markdown("#### 🎯 Quick Presets")
+        col_ep1, col_ep2, col_ep3 = st.columns(3)
+        with col_ep1:
+            if st.button("🟢 Healthy", width="stretch", key="preset_healthy"):
+                st.session_state.est_temp = "35.0"
+                st.session_state.est_vccint = "1.000"
+                st.session_state.est_vccaux = "1.800"
+                st.session_state.est_vccbram = "1.000"
+                st.session_state.est_ro_freq = "250.0"
+                st.session_state.est_err_rate = "0.00001"
+                st.rerun()
+        with col_ep2:
+            if st.button("🟡 Warning", width="stretch", key="preset_warning"):
+                st.session_state.est_temp = "47.0"
+                st.session_state.est_vccint = "0.995"
+                st.session_state.est_vccaux = "1.795"
+                st.session_state.est_vccbram = "0.996"
+                st.session_state.est_ro_freq = "242.0"
+                st.session_state.est_err_rate = "0.0012"
+                st.rerun()
+        with col_ep3:
+            if st.button("🟠 Degraded", width="stretch", key="preset_degraded"):
+                st.session_state.est_temp = "53.5"
+                st.session_state.est_vccint = "0.988"
+                st.session_state.est_vccaux = "1.788"
+                st.session_state.est_vccbram = "0.990"
+                st.session_state.est_ro_freq = "235.0"
+                st.session_state.est_err_rate = "0.0030"
+                st.rerun()
+
+        if st.button("🔄 Clear Form (Use Baselines)", width="stretch", key="preset_clear"):
+            st.session_state.est_temp = ""
+            st.session_state.est_vccint = ""
+            st.session_state.est_vccaux = ""
+            st.session_state.est_vccbram = ""
+            st.session_state.est_ro_freq = ""
+            st.session_state.est_err_rate = ""
+            st.session_state.estimated_source.reset()
+            st.rerun()
+
+        st.markdown("#### 📝 Manual Telemetry Inputs")
+        st.caption("Enter one or more available values. Blank channels default to nominal physical baselines.")
+
+        in_temp = st.text_input("Temperature (°C)", value=st.session_state.est_temp, placeholder="e.g. 45.0 (nom: 35.0, 0-125°C)", key="input_temp")
+        in_ro_freq = st.text_input("RO Frequency (MHz)", value=st.session_state.est_ro_freq, placeholder="e.g. 242.0 (nom: 250.0, 50-400MHz)", key="input_ro_freq")
+        in_vccint = st.text_input("VCCINT Core Voltage (V)", value=st.session_state.est_vccint, placeholder="e.g. 1.000 (nom: 1.000, 0.5-1.5V)", key="input_vccint")
+        in_vccaux = st.text_input("VCCAUX Aux Voltage (V)", value=st.session_state.est_vccaux, placeholder="e.g. 1.800 (nom: 1.800, 1.0-2.5V)", key="input_vccaux")
+        in_vccbram = st.text_input("VCCBRAM BRAM Voltage (V)", value=st.session_state.est_vccbram, placeholder="e.g. 1.000 (nom: 1.000, 0.5-1.5V)", key="input_vccbram")
+        in_err_rate = st.text_input("Functional Error Rate", value=st.session_state.est_err_rate, placeholder="e.g. 0.0001 (nom: 0.00001, 0.0-1.0)", key="input_err_rate")
+
+        st.session_state.est_temp = in_temp
+        st.session_state.est_ro_freq = in_ro_freq
+        st.session_state.est_vccint = in_vccint
+        st.session_state.est_vccaux = in_vccaux
+        st.session_state.est_vccbram = in_vccbram
+        st.session_state.est_err_rate = in_err_rate
+
+        raw_inputs = {
+            "Temperature": in_temp,
+            "RO_Frequency": in_ro_freq,
+            "VCCINT": in_vccint,
+            "VCCAUX": in_vccaux,
+            "VCCBRAM": in_vccbram,
+            "Error_Rate": in_err_rate
+        }
+
+        est_valid, est_errors, est_warnings = st.session_state.estimated_source.set_inputs(raw_inputs)
+        if not est_valid:
+            for err in est_errors:
+                st.error(f"❌ {err}")
+            st.stop()
+        elif est_warnings:
+            for warn in est_warnings:
+                st.warning(f"⚠️ {warn}")
+
+    if "Estimated" not in data_mode:
+        st.markdown("---")
+        st.markdown("### ⏱️ Live Auto-Refresh")
+        st.session_state.auto_refresh = st.toggle("Enable Live Auto-Poll", value=st.session_state.auto_refresh)
+        if st.session_state.auto_refresh:
+            st.session_state.refresh_rate = st.select_slider(
+                "Poll Interval (seconds)",
+                options=[1, 2, 5, 10],
+                value=st.session_state.refresh_rate
+            )
 
     st.markdown("---")
     st.markdown("### 📋 Hardware Target")
@@ -225,6 +348,10 @@ try:
         history_df, latest, meta = st.session_state.sim_source.get_data(window_size=150)
         source_badge = "LIVE SIMULATION"
 
+    elif "Estimated" in data_mode:
+        history_df, latest, meta = st.session_state.estimated_source.get_data(window_size=150)
+        source_badge = "ESTIMATED / USER PROVIDED"
+
     else:
         st.session_state.uart_source.poll_hardware()
         history_df, latest, meta = st.session_state.uart_source.get_data(window_size=150)
@@ -250,12 +377,21 @@ try:
     probs = model.predict_proba(X_window)
     history_df["Confidence"] = probs.max(axis=1)
 
-    latest_pred = str(history_df["Predicted_Health"].iloc[-1])
-    latest_conf = float(history_df["Confidence"].iloc[-1])
+    ml_pred = str(history_df["Predicted_Health"].iloc[-1])
+    ml_conf = float(history_df["Confidence"].iloc[-1])
 
     classes = list(model.classes_)
     latest_probs = probs[-1]
     prob_dict = {cls: float(latest_probs[i]) for i, cls in enumerate(classes)}
+
+    # Evaluate Centralized Engineering & Physical Operating Limits
+    prov_map = meta.get("provenance", {})
+    eng_assessment = evaluate_engineering_limits(latest.to_dict(), provenance_map=prov_map)
+    final_health_dict = determine_final_health(ml_pred, ml_conf, eng_assessment)
+
+    latest_pred = final_health_dict["final_health"]
+    latest_conf = final_health_dict["confidence"]
+    override_applied = final_health_dict["override_applied"]
 
 except Exception as e:
     st.error(f"ML Model inference error: {str(e)}")
@@ -298,6 +434,14 @@ try:
     agent_telemetry = {
         "health": latest_pred,
         "confidence": latest_conf,
+        "ml_prediction": ml_pred,
+        "ml_confidence": ml_conf,
+        "final_health": latest_pred,
+        "override_applied": override_applied,
+        "override_title": final_health_dict.get("override_title", ""),
+        "override_explanation": final_health_dict.get("override_explanation", ""),
+        "override_reasons": final_health_dict.get("reasons", []),
+        "engineering_evaluations": final_health_dict.get("evaluations", {}),
         "temperature": curr_temp,
         "vccint": float(latest["VCCINT"]),
         "vccaux": float(latest["VCCAUX"]),
@@ -310,7 +454,14 @@ try:
         "temp_shift": temp_shift,
         "temp_trend": temp_trend,
         "ro_freq_trend": ro_freq_trend,
-        "error_trend": error_trend
+        "error_trend": error_trend,
+        "source": meta.get("source_type", "LIVE"),
+        "completeness_str": meta.get("completeness_str", "6 / 6"),
+        "completeness_count": meta.get("completeness_count", 6),
+        "reliability_score": meta.get("reliability_score", 1.0),
+        "user_provided": meta.get("user_provided", []),
+        "assumed": meta.get("assumed", []),
+        "is_estimated": "Estimated" in data_mode
     }
     agent_report = evaluate_fpga_health(agent_telemetry)
 except Exception as e:
@@ -329,13 +480,35 @@ except Exception as e:
 
 # 1. Header, FPGA Chip Logo, Monitoring Status
 render_header(
-    status_label="ACTIVE",
+    status_label="ESTIMATED MODE" if "Estimated" in data_mode else "ACTIVE",
     source_label=source_badge,
     platform=DEVICE_NAME
 )
 
+# 1.1 Hard Engineering Limit Safety Override Alert (if triggered)
+if override_applied:
+    render_engineering_override_alert(final_health_dict)
+
+# 1.5. ESTIMATED INPUT PROVENANCE & COMPLETENESS BREAKDOWN (Estimated Mode Only)
+composite_risk = calculate_aggregate_risk_score(
+    health_pred=latest_pred,
+    confidence=latest_conf,
+    temp=curr_temp,
+    ro_freq_shift_pct=ro_freq_shift,
+    error_rate=float(latest["Error_Rate"])
+)
+
+if "Estimated" in data_mode:
+    st.html('<div class="section-header">🔍 Telemetry Input & Provenance Breakdown <span class="tag">ESTIMATION COVERAGE</span></div>')
+    render_estimated_input_breakdown(meta=meta, latest=latest)
+    render_estimated_stress_index(composite_risk, latest_pred)
+
+if "UART" in data_mode:
+    st.html('<div class="section-header">🔌 Hardware UART Interface & Provenance <span class="tag">BASYS 3 ARTIX-7</span></div>')
+    render_hardware_connection_panel(meta=meta)
+
 # 2. CURRENT FPGA HEALTH
-st.html('<div class="section-header">⚡ Current FPGA Health <span class="tag">REAL-TIME STATUS</span></div>')
+st.html('<div class="section-header">⚡ Current FPGA Health <span class="tag">' + ('ESTIMATED HEALTH ASSESSMENT' if 'Estimated' in data_mode else 'REAL-TIME STATUS') + '</span></div>')
 render_primary_health_kpis(
     health_pred=latest_pred,
     confidence=latest_conf,
@@ -417,34 +590,60 @@ render_baseline_comparison(
 
 # 7. SENSOR STATUS EVALUATION
 st.html('<div class="section-header">🔍 Current Sensor Status <span class="tag">THRESHOLD EVALUATION</span></div>')
-render_sensor_status_table(latest=latest, history_df=history_df)
+render_sensor_status_table(
+    latest=latest,
+    history_df=history_df,
+    provenance_map=meta.get("provenance", {})
+)
 
-# 8. ML HEALTH PREDICTION
-st.html('<div class="section-header">🤖 Machine Learning Prediction <span class="tag">RANDOM FOREST INFERENCE</span></div>')
+# 8. ML HEALTH PREDICTION & ENGINEERING SAFETY EVALUATION
+st.html('<div class="section-header">🤖 Machine Learning Prediction & Safety Evaluation <span class="tag">RANDOM FOREST + SAFETY ENVELOPE</span></div>')
 col_m1, col_m2 = st.columns([1, 1])
 
 with col_m1:
+    override_badge_html = ""
+    if override_applied:
+        override_badge_html = f"""
+        <div style="background: rgba(255, 23, 68, 0.15); border: 1px solid #FF1744; border-radius: 6px; padding: 8px 12px; margin-bottom: 12px;">
+            <div style="color: #FF1744; font-weight: 700; font-size: 0.8rem; text-transform: uppercase; font-family: 'JetBrains Mono', monospace;">
+                ⚠️ HARD ENGINEERING LIMIT OVERRIDE ACTIVE
+            </div>
+            <div style="color: #CBD5E1; font-size: 0.78rem; margin-top: 2px;">
+                Final Assessment: <strong style="color: {HEALTH_COLORS.get(latest_pred, '#FF1744')};">{latest_pred.upper()}</strong> takes precedence over ML classifier.
+            </div>
+        </div>
+        """
+
     st.html(f"""
     <div style="background: #111827; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 16px; height: 100%;">
         <div style="font-size: 0.8rem; color: #94A3B8; text-transform: uppercase; font-family: 'JetBrains Mono', monospace; margin-bottom: 6px;">
-            ML Classifier Architecture
+            Dual Architecture: ML Model + Safety Envelope
         </div>
         <div style="font-size: 1.25rem; font-weight: 700; color: #F8FAFC; margin-bottom: 12px;">
             Random Forest Ensemble (200 Estimators)
         </div>
-        <div style="margin-bottom: 10px;">
-            <span style="color: #94A3B8; font-size: 0.85rem;">Predicted Health Class:</span>
-            <span style="color: {HEALTH_COLORS.get(latest_pred, '#00E676')}; font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 1.05rem; margin-left: 6px;">
+        {override_badge_html}
+        <div style="margin-bottom: 8px;">
+            <span style="color: #94A3B8; font-size: 0.85rem;">Raw ML Prediction:</span>
+            <span style="color: {HEALTH_COLORS.get(ml_pred, '#00E676')}; font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 1.0rem; margin-left: 6px;">
+                {ml_pred.upper()}
+            </span>
+            <span style="color: #64748B; font-size: 0.8rem; margin-left: 4px;">({ml_conf * 100:.1f}% conf)</span>
+        </div>
+        <div style="margin-bottom: 8px;">
+            <span style="color: #94A3B8; font-size: 0.85rem;">Final Health Assessment:</span>
+            <span style="color: {HEALTH_COLORS.get(latest_pred, '#00E676')}; font-weight: 800; font-family: 'JetBrains Mono', monospace; font-size: 1.05rem; margin-left: 6px;">
                 {latest_pred.upper()}
             </span>
+            {"<span style='color: #FF5252; font-size: 0.78rem; font-weight: 600; margin-left: 6px;'>[OVERRIDDEN]</span>" if override_applied else "<span style='color: #00E676; font-size: 0.78rem; margin-left: 6px;'>[CONFIRMED]</span>"}
         </div>
         <div style="margin-bottom: 14px;">
-            <span style="color: #94A3B8; font-size: 0.85rem;">Classification Confidence:</span>
+            <span style="color: #94A3B8; font-size: 0.85rem;">Overall Classification Confidence:</span>
             <span style="color: #00E5FF; font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 1.05rem; margin-left: 6px;">
                 {latest_conf * 100:.1f} %
             </span>
         </div>
-        <div style="font-size: 0.8rem; color: #94A3B8; margin-bottom: 6px;">Class Probability Breakdown:</div>
+        <div style="font-size: 0.8rem; color: #94A3B8; margin-bottom: 6px;">Raw ML Class Probability Breakdown:</div>
     </div>
     """)
 
@@ -464,13 +663,6 @@ with col_m2:
 
 # 9. FPGA HEALTH RISK MAP
 st.html('<div class="section-header">🗺️ FPGA Health Risk Map <span class="tag">VIRTUAL LOGIC FABRIC</span></div>')
-composite_risk = calculate_aggregate_risk_score(
-    health_pred=latest_pred,
-    confidence=latest_conf,
-    temp=curr_temp,
-    ro_freq_shift_pct=ro_freq_shift,
-    error_rate=float(latest["Error_Rate"])
-)
 risk_cells = generate_risk_cells(composite_risk)
 st.html(render_health_risk_map_html(risk_cells, composite_risk))
 
@@ -513,6 +705,15 @@ st.dataframe(
 
 with st.expander("🔬 Show Engineered ML Features (Differences & Rolling Statistics)"):
     st.dataframe(history_df.tail(15), width="stretch")
+
+with st.expander("⚖️ Compare Hardware Telemetry vs Estimated Assessment"):
+    est_src = st.session_state.get("estimated_source", EstimatedDataSource())
+    render_hardware_vs_estimated_comparison(
+        hw_latest=latest,
+        est_inputs=est_src.user_inputs if hasattr(est_src, "user_inputs") else {},
+        hw_pred=latest_pred,
+        est_pred=latest_pred
+    )
 
 
 # 13. RESEARCH TRANSPARENCY & SYSTEM INFORMATION

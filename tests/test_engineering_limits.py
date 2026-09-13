@@ -1,0 +1,447 @@
+"""
+Comprehensive Unit & Integration Test Suite for FPGA Engineering Limits & Safety Envelope
+========================================================================================
+Tests:
+ 1. Temperature = 0°C -> NOT Healthy (Overridden to Degraded / Critical).
+ 2. Temperature = 35°C (nominal) -> No violation (Healthy).
+ 3. Temperature = 48°C -> Warning operating behavior.
+ 4. Temperature = 55°C / 125°C -> Critical thermal stress behavior.
+ 5. VCCINT = 0.2V -> Severe undervoltage critical violation.
+ 6. VCCINT = 1.3V -> Severe overvoltage critical violation.
+ 7. RO_Frequency = 220 MHz -> Severe gate delay / aging critical violation.
+ 8. Error_Rate = 0.003 -> Elevated functional error critical violation.
+ 9. ML predicts Healthy but hard limit violated -> Final Engineering Assessment overrides ML.
+ 10. All nominal -> ML result determines health (no override).
+ 11. Estimated mode with partial telemetry & hard limit violation -> Override applied & provenance tracked.
+ 12. Hardware telemetry with hard limit violation -> Override applied.
+ 13. Three-Tier Validation Distinction (Input Validity vs Physical Validity vs Operating Range).
+ 14. Diagnostic Reasoning Agent (LangGraph) incorporates safety override explanation.
+"""
+
+import sys
+import unittest
+from pathlib import Path
+import pandas as pd
+import joblib
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from dashboard.config import (
+    SENSOR_CONFIG,
+    LimitSeverity,
+    evaluate_single_channel,
+    evaluate_engineering_limits,
+    determine_final_health
+)
+from dashboard.data_source import (
+    EstimatedDataSource,
+    MockCSVDataSource,
+    LiveSimulationDataSource,
+    LiveUARTDataSource
+)
+from agent.langgraph_agent import evaluate_fpga_health
+
+
+class TestEngineeringOperatingLimits(unittest.TestCase):
+
+    def setUp(self):
+        self.est_source = EstimatedDataSource()
+        self.model_path = PROJECT_ROOT / "ml" / "models" / "fpga_health_model.pkl"
+        if self.model_path.exists():
+            bundle = joblib.load(self.model_path)
+            self.model = bundle["model"]
+            self.features = bundle["features"]
+        else:
+            self.model = None
+            self.features = None
+
+    # -------------------------------------------------------------------------
+    # Test 1: Temperature = 0°C (Freeze fault / cold start) -> NOT Healthy
+    # -------------------------------------------------------------------------
+    def test_case_1_temp_zero_celsius_critical_override(self):
+        reading = {
+            "Temperature": 0.0,
+            "VCCINT": 1.000,
+            "VCCAUX": 1.800,
+            "VCCBRAM": 1.000,
+            "RO_Frequency": 250.0,
+            "RO_Delay_ns": 0.4000,
+            "Error_Rate": 0.00001
+        }
+        assessment = evaluate_engineering_limits(reading)
+        self.assertTrue(assessment["has_critical"])
+        self.assertEqual(assessment["max_severity"], LimitSeverity.CRITICAL)
+        
+        # Verify single channel eval
+        temp_eval = assessment["evaluations"]["Temperature"]
+        self.assertEqual(temp_eval.severity, LimitSeverity.CRITICAL)
+        self.assertTrue(temp_eval.is_hard_override)
+        self.assertIn("freeze fault", temp_eval.status_label.lower())
+        self.assertIn("at or below 0", temp_eval.reason.lower())
+
+        # Verify ML Override: Even if ML predicts Healthy, final MUST NOT be Healthy
+        final_res = determine_final_health(
+            ml_prediction="Healthy",
+            ml_confidence=0.98,
+            engineering_assessment=assessment
+        )
+        self.assertTrue(final_res["override_applied"])
+        self.assertNotEqual(final_res["final_health"], "Healthy")
+        self.assertIn(final_res["final_health"], ["Degraded", "Critical"])
+        self.assertIn("Temperature", final_res["override_explanation"])
+
+    # -------------------------------------------------------------------------
+    # Test 2: Temperature = 35°C (Nominal) -> No violation
+    # -------------------------------------------------------------------------
+    def test_case_2_temp_nominal_35c_no_violation(self):
+        reading = {
+            "Temperature": 35.0,
+            "VCCINT": 1.000,
+            "VCCAUX": 1.800,
+            "VCCBRAM": 1.000,
+            "RO_Frequency": 250.0,
+            "RO_Delay_ns": 0.4000,
+            "Error_Rate": 0.00001
+        }
+        assessment = evaluate_engineering_limits(reading)
+        self.assertFalse(assessment["has_critical"])
+        self.assertFalse(assessment["has_warning"])
+        self.assertEqual(assessment["max_severity"], LimitSeverity.NORMAL)
+
+        final_res = determine_final_health(
+            ml_prediction="Healthy",
+            ml_confidence=0.96,
+            engineering_assessment=assessment
+        )
+        self.assertFalse(final_res["override_applied"])
+        self.assertEqual(final_res["final_health"], "Healthy")
+
+    # -------------------------------------------------------------------------
+    # Test 3: Temperature = 48°C -> Warning operating behavior
+    # -------------------------------------------------------------------------
+    def test_case_3_temp_warning_48c(self):
+        reading = {
+            "Temperature": 48.0,
+            "VCCINT": 1.000,
+            "VCCAUX": 1.800,
+            "VCCBRAM": 1.000,
+            "RO_Frequency": 250.0,
+            "RO_Delay_ns": 0.4000,
+            "Error_Rate": 0.00001
+        }
+        assessment = evaluate_engineering_limits(reading)
+        self.assertFalse(assessment["has_critical"])
+        self.assertTrue(assessment["has_warning"])
+        self.assertEqual(assessment["max_severity"], LimitSeverity.WARNING)
+
+        final_res = determine_final_health(
+            ml_prediction="Healthy",
+            ml_confidence=0.92,
+            engineering_assessment=assessment
+        )
+        self.assertTrue(final_res["override_applied"])
+        self.assertEqual(final_res["final_health"], "Warning")
+
+    # -------------------------------------------------------------------------
+    # Test 4: Temperature = 55°C & 125°C -> Critical thermal behavior
+    # -------------------------------------------------------------------------
+    def test_case_4_temp_critical_55c_and_125c(self):
+        for temp_val in [55.0, 125.0]:
+            reading = {
+                "Temperature": temp_val,
+                "VCCINT": 1.000,
+                "VCCAUX": 1.800,
+                "VCCBRAM": 1.000,
+                "RO_Frequency": 250.0,
+                "RO_Delay_ns": 0.4000,
+                "Error_Rate": 0.00001
+            }
+            assessment = evaluate_engineering_limits(reading)
+            self.assertTrue(assessment["has_critical"])
+            temp_eval = assessment["evaluations"]["Temperature"]
+            self.assertEqual(temp_eval.severity, LimitSeverity.CRITICAL)
+
+            final_res = determine_final_health(
+                ml_prediction="Healthy",
+                ml_confidence=0.90,
+                engineering_assessment=assessment
+            )
+            self.assertTrue(final_res["override_applied"])
+            self.assertIn(final_res["final_health"], ["Degraded", "Critical"])
+
+    # -------------------------------------------------------------------------
+    # Test 5: VCCINT = 0.2V -> Severe undervoltage critical violation
+    # -------------------------------------------------------------------------
+    def test_case_5_vccint_low_0_2v_critical(self):
+        reading = {
+            "Temperature": 35.0,
+            "VCCINT": 0.200,
+            "VCCAUX": 1.800,
+            "VCCBRAM": 1.000,
+            "RO_Frequency": 250.0,
+            "RO_Delay_ns": 0.4000,
+            "Error_Rate": 0.00001
+        }
+        assessment = evaluate_engineering_limits(reading)
+        self.assertTrue(assessment["has_critical"])
+        vcc_eval = assessment["evaluations"]["VCCINT"]
+        self.assertEqual(vcc_eval.severity, LimitSeverity.CRITICAL)
+        self.assertIn("droop", vcc_eval.status_label.lower())
+        self.assertIn("dropped below", vcc_eval.reason.lower())
+
+        final_res = determine_final_health(
+            ml_prediction="Healthy",
+            ml_confidence=0.99,
+            engineering_assessment=assessment
+        )
+        self.assertTrue(final_res["override_applied"])
+        self.assertIn(final_res["final_health"], ["Degraded", "Critical"])
+
+    # -------------------------------------------------------------------------
+    # Test 6: VCCINT = 1.3V -> Severe overvoltage critical violation
+    # -------------------------------------------------------------------------
+    def test_case_6_vccint_high_1_3v_critical(self):
+        reading = {
+            "Temperature": 35.0,
+            "VCCINT": 1.300,
+            "VCCAUX": 1.800,
+            "VCCBRAM": 1.000,
+            "RO_Frequency": 250.0,
+            "RO_Delay_ns": 0.4000,
+            "Error_Rate": 0.00001
+        }
+        assessment = evaluate_engineering_limits(reading)
+        self.assertTrue(assessment["has_critical"])
+        vcc_eval = assessment["evaluations"]["VCCINT"]
+        self.assertEqual(vcc_eval.severity, LimitSeverity.CRITICAL)
+        self.assertIn("overvoltage", vcc_eval.status_label.lower())
+        self.assertIn("exceeds maximum", vcc_eval.reason.lower())
+
+        final_res = determine_final_health(
+            ml_prediction="Healthy",
+            ml_confidence=0.99,
+            engineering_assessment=assessment
+        )
+        self.assertTrue(final_res["override_applied"])
+
+    # -------------------------------------------------------------------------
+    # Test 7: RO_Frequency = 220 MHz -> Critical timing degradation
+    # -------------------------------------------------------------------------
+    def test_case_7_ro_frequency_220mhz_critical(self):
+        reading = {
+            "Temperature": 35.0,
+            "VCCINT": 1.000,
+            "VCCAUX": 1.800,
+            "VCCBRAM": 1.000,
+            "RO_Frequency": 220.0,
+            "RO_Delay_ns": 0.4545,
+            "Error_Rate": 0.00001
+        }
+        assessment = evaluate_engineering_limits(reading)
+        self.assertTrue(assessment["has_critical"])
+        ro_eval = assessment["evaluations"]["RO_Frequency"]
+        self.assertEqual(ro_eval.severity, LimitSeverity.CRITICAL)
+
+        final_res = determine_final_health(
+            ml_prediction="Healthy",
+            ml_confidence=0.95,
+            engineering_assessment=assessment
+        )
+        self.assertTrue(final_res["override_applied"])
+        self.assertIn(final_res["final_health"], ["Degraded", "Critical"])
+
+    # -------------------------------------------------------------------------
+    # Test 8: Error_Rate = 0.003 -> Elevated functional error critical violation
+    # -------------------------------------------------------------------------
+    def test_case_8_error_rate_0_003_critical(self):
+        reading = {
+            "Temperature": 35.0,
+            "VCCINT": 1.000,
+            "VCCAUX": 1.800,
+            "VCCBRAM": 1.000,
+            "RO_Frequency": 250.0,
+            "RO_Delay_ns": 0.4000,
+            "Error_Rate": 0.003000
+        }
+        assessment = evaluate_engineering_limits(reading)
+        self.assertTrue(assessment["has_critical"])
+        err_eval = assessment["evaluations"]["Error_Rate"]
+        self.assertEqual(err_eval.severity, LimitSeverity.CRITICAL)
+
+        final_res = determine_final_health(
+            ml_prediction="Healthy",
+            ml_confidence=0.85,
+            engineering_assessment=assessment
+        )
+        self.assertTrue(final_res["override_applied"])
+        self.assertIn(final_res["final_health"], ["Degraded", "Critical"])
+
+    # -------------------------------------------------------------------------
+    # Test 9: ML predicts Healthy but hard limit violated -> Deterministic override
+    # -------------------------------------------------------------------------
+    def test_case_9_ml_predicts_healthy_but_hard_limit_violated(self):
+        reading = {
+            "Temperature": 0.0,  # Freeze fault hard limit
+            "VCCINT": 1.000,
+            "VCCAUX": 1.800,
+            "VCCBRAM": 1.000,
+            "RO_Frequency": 250.0,
+            "RO_Delay_ns": 0.4000,
+            "Error_Rate": 0.00001
+        }
+        assessment = evaluate_engineering_limits(reading)
+        final_res = determine_final_health("Healthy", 0.99, assessment)
+        
+        self.assertTrue(final_res["override_applied"])
+        self.assertEqual(final_res["ml_prediction"], "Healthy")
+        self.assertEqual(final_res["ml_confidence"], 0.99)
+        self.assertNotEqual(final_res["final_health"], "Healthy")
+        self.assertGreater(len(final_res["reasons"]), 0)
+        self.assertIn("Temperature", final_res["reasons"][0])
+
+    # -------------------------------------------------------------------------
+    # Test 10: All nominal -> ML result determines health
+    # -------------------------------------------------------------------------
+    def test_case_10_all_nominal_ml_determines_health(self):
+        reading = {
+            "Temperature": 35.0,
+            "VCCINT": 1.000,
+            "VCCAUX": 1.800,
+            "VCCBRAM": 1.000,
+            "RO_Frequency": 250.0,
+            "RO_Delay_ns": 0.4000,
+            "Error_Rate": 0.00001
+        }
+        assessment = evaluate_engineering_limits(reading)
+        
+        # Test ML = Healthy
+        res_h = determine_final_health("Healthy", 0.95, assessment)
+        self.assertFalse(res_h["override_applied"])
+        self.assertEqual(res_h["final_health"], "Healthy")
+
+        # Test ML = Warning
+        res_w = determine_final_health("Warning", 0.88, assessment)
+        self.assertFalse(res_w["override_applied"])
+        self.assertEqual(res_w["final_health"], "Warning")
+
+        # Test ML = Degraded
+        res_d = determine_final_health("Degraded", 0.92, assessment)
+        self.assertFalse(res_d["override_applied"])
+        self.assertEqual(res_d["final_health"], "Degraded")
+
+    # -------------------------------------------------------------------------
+    # Test 11: Estimated mode with partial telemetry & hard limit violation
+    # -------------------------------------------------------------------------
+    def test_case_11_estimated_mode_partial_telemetry_hard_limit(self):
+        # User provides ONLY Temperature = 0.0 (Freeze fault)
+        inputs = {"Temperature": "0.0"}
+        valid, errors, warnings = self.est_source.set_inputs(inputs)
+        self.assertTrue(valid)
+        self.assertGreater(len(warnings), 0)
+
+        history_df, latest, meta = self.est_source.get_data(window_size=10)
+        assessment = meta.get("engineering_assessment", {})
+        
+        self.assertTrue(assessment["has_critical"])
+        self.assertEqual(meta["provenance"]["Temperature"], "USER_PROVIDED")
+        self.assertEqual(meta["provenance"]["VCCINT"], "ASSUMED_BASELINE")
+        self.assertEqual(meta["provenance"]["RO_Delay_ns"], "ASSUMED_BASELINE")
+
+        final_res = determine_final_health("Healthy", 0.95, assessment)
+        self.assertTrue(final_res["override_applied"])
+        self.assertNotEqual(final_res["final_health"], "Healthy")
+
+    # -------------------------------------------------------------------------
+    # Test 12: Hardware telemetry with hard limit violation
+    # -------------------------------------------------------------------------
+    def test_case_12_hardware_telemetry_hard_limit_override(self):
+        uart_src = LiveUARTDataSource(port="COM3")
+        # Ingest mock hardware packets with severe undervoltage
+        deg_json = '{"Temperature":35.0,"VCCINT":0.850,"VCCAUX":1.800,"VCCBRAM":1.000,"RO_Frequency":250.0,"Error_Rate":0.000010}'
+        parsed = uart_src.receiver._parse_raw_line(deg_json)
+        self.assertIsNotNone(parsed)
+        for _ in range(15):
+            uart_src.buffer.append(dict(parsed))
+        history_df, latest, meta = uart_src.get_data(window_size=10)
+        
+        assessment = meta.get("engineering_assessment", {})
+        self.assertTrue(assessment["has_critical"])
+        self.assertEqual(meta["provenance"]["VCCINT"], "MEASURED")
+
+        final_res = determine_final_health("Healthy", 0.95, assessment)
+        self.assertTrue(final_res["override_applied"])
+        self.assertIn("VCCINT", final_res["reasons"][0])
+
+    # -------------------------------------------------------------------------
+    # Test 13: Three-Tier Validation Distinction
+    # -------------------------------------------------------------------------
+    def test_case_13_three_tier_validation_distinction(self):
+        # Tier 1: Input Validity (Syntax/Type)
+        v1, num1, err1, w1 = self.est_source.validate_channel("Temperature", "abc")
+        self.assertFalse(v1)
+        self.assertIn("numeric", err1.lower())
+
+        # Tier 2: Physical Plausibility (Sensor Range)
+        v2, num2, err2, w2 = self.est_source.validate_channel("Temperature", "-500.0")
+        self.assertFalse(v2)
+        self.assertIn("physical sensor bounds", err2.lower())
+
+        # Tier 3: Operating Health Range (Safe Envelope)
+        # 0.0°C is physically valid, so it must be accepted as valid input, but generate an operating warning
+        v3, num3, err3, w3 = self.est_source.validate_channel("Temperature", "0.0")
+        self.assertTrue(v3)
+        self.assertEqual(num3, 0.0)
+        self.assertIsNone(err3)
+        self.assertIsNotNone(w3)
+        self.assertIn("outside", w3.lower())
+
+    # -------------------------------------------------------------------------
+    # Test 14: LangGraph Diagnostic Agent incorporates safety override
+    # -------------------------------------------------------------------------
+    def test_case_14_langgraph_agent_override_reasoning(self):
+        telemetry = {
+            "health": "Degraded",
+            "confidence": 0.99,
+            "ml_prediction": "Healthy",
+            "ml_confidence": 0.95,
+            "override_applied": True,
+            "override_title": "HARD ENGINEERING LIMIT OVERRIDE: CRITICAL SAFETY LIMIT EXCEEDED",
+            "override_explanation": "VCCINT is 0.8500 V which violates critical operating limit [0.9200, 1.0800 V].",
+            "override_reasons": ["VCCINT = 0.8500 V: Critical core undervoltage"],
+            "temperature": 35.0,
+            "vccint": 0.85,
+            "vccaux": 1.80,
+            "vccbram": 1.00,
+            "ro_frequency": 250.0,
+            "ro_delay": 0.4000,
+            "error_rate": 0.00001,
+            "ro_freq_shift_pct": 0.0,
+            "ro_delay_shift_pct": 0.0,
+            "temp_shift": 0.0,
+            "temp_trend": "Stable",
+            "ro_freq_trend": "Stable",
+            "error_trend": "Stable",
+            "source": "LIVE",
+            "completeness_str": "6 / 6",
+            "completeness_count": 6,
+            "reliability_score": 1.0,
+            "user_provided": [],
+            "assumed": []
+        }
+        report = evaluate_fpga_health(telemetry)
+        
+        self.assertIn("HIGH", report["risk_level"].upper())
+        self.assertTrue(
+            any("override" in ind.lower() or "vccint" in ind.lower() or "undervoltage" in ind.lower()
+                for ind in report["primary_indicators"])
+        )
+        self.assertTrue(
+            any("voltage" in str(act).lower() or "power" in str(act).lower()
+                for act in report["recommended_actions"].values())
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

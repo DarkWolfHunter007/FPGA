@@ -127,6 +127,13 @@ code, .stMetricValue, .tech-mono {
     box-shadow: 0 0 12px rgba(255, 145, 0, 0.25);
 }
 
+.badge-estimated {
+    background: rgba(168, 85, 247, 0.15);
+    color: #C084FC;
+    border: 1px solid rgba(168, 85, 247, 0.5);
+    box-shadow: 0 0 12px rgba(168, 85, 247, 0.25);
+}
+
 .badge-chip {
     background: rgba(148, 163, 184, 0.1);
     color: #CBD5E1;
