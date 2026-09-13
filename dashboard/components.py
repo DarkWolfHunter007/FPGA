@@ -7,7 +7,7 @@ Uses st.html() to cleanly render raw HTML/SVG without CommonMark code-block pars
 """
 
 import textwrap
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Tuple
 import pandas as pd
 import streamlit as st
 
