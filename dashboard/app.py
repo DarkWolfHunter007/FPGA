@@ -937,8 +937,8 @@ with col_m2:
 # 9. FPGA FOUR-REGION PHYSICAL HEALTH ARCHITECTURE
 st.html('<div class="section-header">🗺️ Four-Region Physical FPGA Health Architecture <span class="tag">PHYSICAL 2×2 SILICON QUADRANTS</span></div>')
 four_regions = generate_four_region_data(
-    latest_sample.to_dict(),
-    metadata.get("regional_baselines") or metadata.get("baseline", {})
+    latest.to_dict(),
+    meta.get("regional_baselines") or meta.get("baseline", {})
 )
 st.html(render_four_region_map_html(four_regions, composite_risk))
 
