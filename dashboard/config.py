@@ -228,7 +228,73 @@ STATUS_BG_COLORS = {
 }
 
 
+# =============================================================================
+# Four-Region Physical Health Configuration (Basys 3 XC7A35T)
+# =============================================================================
+# Physical 2x2 Layout:
+#   R1 (Northwest): CLOCKREGION_X0Y2 -> SLICE_X0Y100:SLICE_X35Y149 (pblock_R1)
+#   R2 (Northeast): CLOCKREGION_X1Y2 -> SLICE_X36Y100:SLICE_X57Y149 (pblock_R2)
+#   R3 (Southwest): CLOCKREGION_X0Y0 -> SLICE_X0Y0:SLICE_X35Y49    (pblock_R3)
+#   R4 (Southeast): CLOCKREGION_X1Y0 -> SLICE_X36Y0:SLICE_X65Y49    (pblock_R4)
+# =============================================================================
+REGIONAL_CONFIG: Dict[str, Dict[str, Any]] = {
+    "R1": {
+        "id": "R1",
+        "name": "Region 1 (R1)",
+        "quadrant": "Northwest (NW)",
+        "clock_region": "X0Y2",
+        "pblock": "pblock_R1",
+        "slice_range": "SLICE_X0Y100:SLICE_X35Y149",
+        "nominal_freq": 436.3,       # Measured initial physical baseline for R1
+        "nominal_delay_ns": 0.2292,  # 100 / 436.3
+        "warning_drop_pct": 3.0,
+        "critical_drop_pct": 5.5,
+        "description": "Monitors logic timing propagation in Northwest silicon quadrant"
+    },
+    "R2": {
+        "id": "R2",
+        "name": "Region 2 (R2)",
+        "quadrant": "Northeast (NE)",
+        "clock_region": "X1Y2",
+        "pblock": "pblock_R2",
+        "slice_range": "SLICE_X36Y100:SLICE_X57Y149",
+        "nominal_freq": 435.8,       # Measured initial physical baseline for R2
+        "nominal_delay_ns": 0.2295,  # 100 / 435.8
+        "warning_drop_pct": 3.0,
+        "critical_drop_pct": 5.5,
+        "description": "Monitors logic timing propagation in Northeast silicon quadrant"
+    },
+    "R3": {
+        "id": "R3",
+        "name": "Region 3 (R3)",
+        "quadrant": "Southwest (SW)",
+        "clock_region": "X0Y0",
+        "pblock": "pblock_R3",
+        "slice_range": "SLICE_X0Y0:SLICE_X35Y49",
+        "nominal_freq": 436.1,       # Measured initial physical baseline for R3
+        "nominal_delay_ns": 0.2293,  # 100 / 436.1
+        "warning_drop_pct": 3.0,
+        "critical_drop_pct": 5.5,
+        "description": "Monitors logic timing propagation in Southwest silicon quadrant"
+    },
+    "R4": {
+        "id": "R4",
+        "name": "Region 4 (R4)",
+        "quadrant": "Southeast (SE)",
+        "clock_region": "X1Y0",
+        "pblock": "pblock_R4",
+        "slice_range": "SLICE_X36Y0:SLICE_X65Y49",
+        "nominal_freq": 435.9,       # Measured initial physical baseline for R4
+        "nominal_delay_ns": 0.2294,  # 100 / 435.9
+        "warning_drop_pct": 3.0,
+        "critical_drop_pct": 5.5,
+        "description": "Monitors logic timing propagation in Southeast silicon quadrant"
+    }
+}
+
+
 def get_error_risk_label(error_rate: float) -> Tuple[str, str, str]:
+
     """
     Independent classification of functional Error Risk derived strictly from Error_Rate.
     Decoupled from overall FPGA Health (which may be degraded by temperature, supply rails, or RO timing).
