@@ -103,6 +103,57 @@ class FPGAUARTReceiver:
         )
 
     @classmethod
+    def _is_bluetooth_port(cls, port_obj: Any) -> bool:
+        """Determines if a serial port is a virtual Bluetooth link."""
+        hwid = (getattr(port_obj, "hwid", "") or "").lower()
+        desc = (getattr(port_obj, "description", "") or "").lower()
+        return "bthenum" in hwid or "bluetooth" in desc
+
+    @classmethod
+    def _classify_port_device(cls, port_obj: Any) -> Tuple[str, str, bool]:
+        """
+        Classifies a serial port device into category, clean description, and is_usb flag.
+        Returns: (category, clean_description, is_usb)
+        """
+        desc = getattr(port_obj, "description", "") or "Generic Serial Port"
+        hwid = (getattr(port_obj, "hwid", "") or "").lower()
+        vid = getattr(port_obj, "vid", None)
+        pid = getattr(port_obj, "pid", None)
+        mfg = (getattr(port_obj, "manufacturer", "") or "").lower()
+
+        # Check Digilent Basys 3 FTDI FT2232 signature
+        if (vid in (0x0403, 1027) and pid in (0x6010, 24592)) or "0403:6010" in hwid or "0403+6010" in hwid:
+            return "Basys 3 FPGA (FTDI FT2232)", "Digilent Basys 3 Artix-7 Dual USB-UART/JTAG", True
+        if "digilent" in desc.lower() or "digilent" in hwid or "digilent" in mfg:
+            return "Basys 3 FPGA (Digilent)", "Digilent USB Device", True
+
+        # Check other common USB-to-UART bridges
+        if (vid in (0x0403, 1027) and pid in (0x6001, 24577)) or "ft232" in desc.lower() or "0403:6001" in hwid:
+            return "FTDI FT232R USB-UART", desc, True
+        if vid in (0x0403, 1027) or "ftdi" in mfg or "ftdi" in hwid:
+            return "FTDI USB-UART Bridge", desc, True
+        if (vid in (0x10C4, 4292)) or "cp210" in desc.lower() or "cp210" in hwid:
+            return "Silicon Labs CP210x USB-UART", desc, True
+        if (vid in (0x1A86, 6790)) or "ch340" in desc.lower() or "ch341" in desc.lower() or "1a86:" in hwid:
+            return "WCH CH340 USB-UART", desc, True
+        if (vid in (0x067B, 1659)) or "pl2303" in desc.lower():
+            return "Prolific PL2303 USB-UART", desc, True
+        if (vid in (0x2E8A, 11914)) or "pico" in desc.lower() or "rp2040" in desc.lower():
+            return "Raspberry Pi RP2040 USB CDC", desc, True
+        if (vid in (0x2341, 9025)) or "arduino" in desc.lower():
+            return "Arduino USB Serial", desc, True
+
+        # Check Bluetooth links
+        if cls._is_bluetooth_port(port_obj):
+            return "Bluetooth Serial Link", desc, False
+
+        # Generic USB Serial
+        if "usb" in desc.lower() or "usb" in hwid:
+            return "Generic USB Serial Device", desc, True
+
+        return "Standard Serial COM Port", desc, False
+
+    @classmethod
     def detect_fpga_port(cls) -> Optional[str]:
         """
         Auto-detects the Digilent Basys 3 USB-UART COM port.
@@ -112,24 +163,196 @@ class FPGAUARTReceiver:
             return None
         try:
             for p in serial.tools.list_ports.comports():
-                desc = (p.description or "").lower()
-                hwid = (p.hwid or "").lower()
-                mfg = (p.manufacturer or "").lower()
-                # Check VID/PID integers (0x0403 = 1027, 0x6010 = 24592)
-                if (getattr(p, "vid", None) in (0x0403, 1027) and getattr(p, "pid", None) in (0x6010, 24592)):
+                category, _, is_usb = cls._classify_port_device(p)
+                if "Basys 3" in category:
                     return p.device
-                # Match FTDI FT2232 / Digilent in HWID, description, or manufacturer
-                if "0403:6010" in hwid or "0403+6010" in hwid:
-                    return p.device
-                if "digilent" in desc or "digilent" in hwid or "digilent" in mfg:
-                    return p.device
-                if "ftdi" in mfg and ("serial" in desc or "usb" in desc or "com" in desc or "port" in desc):
-                    return p.device
-                if "ftdi" in desc or "ftdi" in hwid:
+            # Fallback: check any FTDI or USB device
+            for p in serial.tools.list_ports.comports():
+                category, _, is_usb = cls._classify_port_device(p)
+                if is_usb and not cls._is_bluetooth_port(p):
                     return p.device
         except Exception:
             pass
         return None
+
+    @classmethod
+    def probe_port(cls, port_name: str, timeout: float = 0.4) -> Dict[str, Any]:
+        """
+        Probes a specific serial port to check if it can be opened and whether
+        it is streaming valid Basys 3 FPGA telemetry packets.
+        """
+        if not SERIAL_AVAILABLE:
+            return {"status": "ERROR", "message": "PySerial not available in environment.", "telemetry": False}
+
+        try:
+            with serial.Serial(
+                port=port_name,
+                baudrate=115200,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                timeout=timeout
+            ) as s:
+                # Wait briefly for incoming bytes
+                t0 = time.time()
+                incoming = b""
+                while time.time() - t0 < timeout:
+                    if s.in_waiting > 0:
+                        incoming += s.read(s.in_waiting)
+                        if b"\n" in incoming or b"}" in incoming:
+                            break
+                    time.sleep(0.04)
+
+                if incoming:
+                    text = incoming.decode("utf-8", errors="ignore")
+                    if "{" in text and ("Temperature" in text or "RO_Frequency" in text or "VCCINT" in text):
+                        return {
+                            "status": "FPGA_STREAMING",
+                            "message": "🟢 Valid FPGA JSON telemetry actively streaming!",
+                            "telemetry": True,
+                            "raw_sample": text.strip()[:100]
+                        }
+                    elif "HELLO FPGA" in text:
+                        return {
+                            "status": "FPGA_BANNER",
+                            "message": "🟢 FPGA Startup Handshake Banner detected!",
+                            "telemetry": True,
+                            "raw_sample": text.strip()[:100]
+                        }
+                    elif "TEMP:" in text or "RO:" in text:
+                        return {
+                            "status": "FPGA_KV_STREAMING",
+                            "message": "🟢 FPGA Key-Value telemetry detected!",
+                            "telemetry": True,
+                            "raw_sample": text.strip()[:100]
+                        }
+                    else:
+                        return {
+                            "status": "DATA_DETECTED",
+                            "message": f"Serial data detected ({len(incoming)} bytes), but not recognized FPGA format.",
+                            "telemetry": False,
+                            "raw_sample": text.strip()[:60]
+                        }
+                else:
+                    return {
+                        "status": "PORT_OPEN_IDLE",
+                        "message": "Port open, but no serial data transmitted within timeout.",
+                        "telemetry": False
+                    }
+        except serial.SerialException as se:
+            err = str(se)
+            if "PermissionError" in err or "Access is denied" in err:
+                return {
+                    "status": "PORT_LOCKED",
+                    "message": "Port is busy / locked by another process (or active dashboard session).",
+                    "telemetry": False
+                }
+            elif "FileNotFoundError" in err or "could not open port" in err:
+                return {
+                    "status": "NOT_FOUND",
+                    "message": "Port not found or device disconnected.",
+                    "telemetry": False
+                }
+            else:
+                return {
+                    "status": "ERROR",
+                    "message": f"Serial error: {err}",
+                    "telemetry": False
+                }
+        except Exception as e:
+            return {
+                "status": "ERROR",
+                "message": f"Error probing port: {str(e)}",
+                "telemetry": False
+            }
+
+    @classmethod
+    def scan_all_ports_detailed(
+        cls,
+        current_receiver: Optional['FPGAUARTReceiver'] = None,
+        probe_telemetry: bool = False
+    ) -> List[Dict[str, Any]]:
+        """
+        Thoroughly tracks and catalogs EVERY COM port on the host system.
+        Returns rich metadata, device category, active status, and telemetry verification.
+        """
+        if not SERIAL_AVAILABLE:
+            return []
+
+        try:
+            ports = list(serial.tools.list_ports.comports())
+        except Exception:
+            ports = []
+
+        results = []
+        current_port = current_receiver.port if (current_receiver and current_receiver.is_port_open) else None
+
+        for p in ports:
+            category, clean_desc, is_usb = cls._classify_port_device(p)
+            is_bt = cls._is_bluetooth_port(p)
+            is_cur = (p.device == current_port)
+
+            info = {
+                "device": p.device,
+                "category": category,
+                "description": p.description or clean_desc,
+                "hwid": p.hwid or "N/A",
+                "manufacturer": p.manufacturer or "Unknown",
+                "is_usb": is_usb,
+                "is_bluetooth": is_bt,
+                "is_current": is_cur,
+                "status": "AVAILABLE",
+                "status_label": "Ready to connect",
+                "telemetry_detected": False,
+                "details": ""
+            }
+
+            # If this is the active port currently open in the receiver
+            if is_cur and current_receiver:
+                if current_receiver.is_streaming:
+                    info["status"] = "ACTIVE_STREAMING"
+                    info["status_label"] = "🟢 Actively Streaming Telemetry"
+                    info["telemetry_detected"] = True
+                    info["details"] = f"Packets: {current_receiver.packet_count:,} | Rate: {current_receiver.get_packet_rate_hz()} Hz"
+                elif current_receiver.is_port_open:
+                    info["status"] = "ACTIVE_OPEN"
+                    info["status_label"] = "🟡 Port Open (Awaiting Telemetry)"
+                    info["details"] = "Connected in current dashboard session"
+                else:
+                    info["status"] = "DISCONNECTED"
+                    info["status_label"] = "Disconnected"
+            elif probe_telemetry and not is_bt:
+                # Probe physical port for telemetry
+                probe_res = cls.probe_port(p.device, timeout=0.3)
+                info["status"] = probe_res["status"]
+                info["status_label"] = probe_res["message"]
+                info["telemetry_detected"] = probe_res.get("telemetry", False)
+                info["details"] = probe_res.get("raw_sample", "")
+            elif is_bt:
+                info["status"] = "BLUETOOTH_LINK"
+                info["status_label"] = "Bluetooth Serial Link"
+                info["details"] = "Probing skipped to prevent Bluetooth latency"
+            else:
+                info["status"] = "AVAILABLE"
+                info["status_label"] = "Available (Click Connect to use)"
+                info["details"] = "Ready"
+
+            results.append(info)
+
+        # Sort so active/FPGA/USB ports appear first, Bluetooth ports at the end
+        def sort_key(item):
+            if item.get("telemetry_detected"):
+                return 0
+            if item.get("is_current"):
+                return 1
+            if "Basys 3" in item.get("category", ""):
+                return 2
+            if item.get("is_usb"):
+                return 3
+            return 4
+
+        results.sort(key=sort_key)
+        return results
 
     @classmethod
     def get_port_display_map(cls) -> Dict[str, str]:
@@ -154,20 +377,16 @@ class FPGAUARTReceiver:
         # 1. Add detected FPGA port first
         for p in ports:
             if p.device == fpga_port:
-                label = f"{p.device} -- Digilent Basys 3 (FTDI FT2232) [Auto-Detected FPGA]"
+                category, clean_desc, _ = cls._classify_port_device(p)
+                label = f"{p.device} -- {category} [Auto-Detected]"
                 port_map[label] = p.device
 
         # 2. Add all other ports with clean descriptors
         for p in ports:
             if p.device == fpga_port:
                 continue
-            desc = p.description or "Generic Serial Port"
-            if "bluetooth" in desc.lower():
-                label = f"{p.device} -- Bluetooth Serial Link ({desc})"
-            elif "usb" in desc.lower() or "ftdi" in (p.manufacturer or "").lower():
-                label = f"{p.device} -- USB Serial ({desc})"
-            else:
-                label = f"{p.device} -- {desc}"
+            category, clean_desc, is_usb = cls._classify_port_device(p)
+            label = f"{p.device} -- {category}"
             port_map[label] = p.device
 
         return port_map
