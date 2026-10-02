@@ -90,8 +90,8 @@ def analyze_indicators(state: FPGAState) -> FPGAState:
     vccint = state.get("vccint", 1.000)
     vccaux = state.get("vccaux", 1.800)
     vccbram = state.get("vccbram", 1.000)
-    ro_freq = state.get("ro_frequency", 250.0)
-    ro_delay = state.get("ro_delay", 0.4000)
+    ro_freq = state.get("ro_frequency", 436.0)
+    ro_delay = state.get("ro_delay", 0.2294)
     error_rate = state.get("error_rate", 0.0)
     
     ro_freq_shift = state.get("ro_freq_shift_pct", 0.0)
@@ -108,17 +108,17 @@ def analyze_indicators(state: FPGAState) -> FPGAState:
         )
 
     # 1. Ring Oscillator Aging / Timing Degradation Indicator
-    if ro_freq < 238.0 or ro_freq_shift <= -4.8:
+    if ro_freq <= 412.0 or ro_freq_shift <= -5.5:
         indicators.append(
             f"Significant Ring Oscillator frequency degradation: {ro_freq:.2f} MHz ({ro_freq_shift:+.2f}% from baseline), "
             f"indicating derived logic stage propagation delay increase ({ro_delay:.4f} ns/stage, {ro_delay_shift:+.2f}%)."
         )
-    elif ro_freq > 265.0:
+    elif ro_freq >= 460.0:
         indicators.append(
             f"Abnormal Ring Oscillator over-frequency: {ro_freq:.2f} MHz (+{ro_freq_shift:+.2f}% above nominal), "
             "indicating anomalous clock measurement or sub-ambient clock skew."
         )
-    elif ro_freq < 245.0 or ro_freq_shift <= -2.0:
+    elif ro_freq < 423.0 or ro_freq_shift <= -3.0:
         indicators.append(
             f"Moderate Ring Oscillator frequency drop: {ro_freq:.2f} MHz ({ro_freq_shift:+.2f}% from baseline), "
             f"suggesting onset of timing drift ({ro_delay:.4f} ns/stage)."
@@ -388,8 +388,8 @@ def evaluate_fpga_health(telemetry: Dict[str, Any]) -> Dict[str, Any]:
         "vccint": float(telemetry.get("vccint", telemetry.get("VCCINT", 1.000))),
         "vccaux": float(telemetry.get("vccaux", telemetry.get("VCCAUX", 1.800))),
         "vccbram": float(telemetry.get("vccbram", telemetry.get("VCCBRAM", 1.000))),
-        "ro_frequency": float(telemetry.get("ro_frequency", telemetry.get("RO_Frequency", 250.0))),
-        "ro_delay": float(telemetry.get("ro_delay", telemetry.get("RO_Delay_ns", 0.4000))),
+        "ro_frequency": float(telemetry.get("ro_frequency", telemetry.get("RO_Frequency", 436.0))),
+        "ro_delay": float(telemetry.get("ro_delay", telemetry.get("RO_Delay_ns", 0.2294))),
         "error_rate": float(telemetry.get("error_rate", telemetry.get("Error_Rate", 0.0))),
         "ro_freq_shift_pct": float(telemetry.get("ro_freq_shift_pct", 0.0)),
         "ro_delay_shift_pct": float(telemetry.get("ro_delay_shift_pct", 0.0)),

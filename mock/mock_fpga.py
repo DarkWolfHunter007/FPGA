@@ -65,12 +65,12 @@ def generate_measurement(timestamp, degradation):
 
     # --------------------------------------------------------
     # Ring oscillator frequency (MHz)
-    # Healthy FPGA ≈ higher frequency (~250 MHz)
-    # Degraded FPGA ≈ lower frequency (~235 MHz)
+    # Healthy FPGA ≈ higher frequency (~436 MHz)
+    # Degraded FPGA ≈ lower frequency (~411 MHz)
     # --------------------------------------------------------
     ro_frequency = (
-        250.0
-        - 15.0 * degradation
+        436.0
+        - 25.0 * degradation
         + np.random.normal(0, 0.8)
     )
 
@@ -78,7 +78,7 @@ def generate_measurement(timestamp, degradation):
     # Physical Derived RO Stage Propagation Delay (ns)
     # Formula: tau = 1 / (2 * N * f_Hz)
     # tau_ns = 1000 / (2 * N * f_MHz)
-    # For N=5 stages and f=235-250 MHz -> tau_ns ~ 0.400 - 0.426 ns/stage
+    # For N=5 stages and f=411-436 MHz -> tau_ns ~ 0.229 - 0.243 ns/stage
     # --------------------------------------------------------
     ro_delay_ns = calculate_ro_delay_ns(ro_frequency, stages=RO_STAGES)
 

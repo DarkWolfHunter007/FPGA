@@ -13,7 +13,15 @@ Precedence Rule:
 
 from enum import Enum
 from typing import Dict, Any, List, Optional, Tuple
-from config import RO_STAGES, calculate_ro_delay_ns, validate_ro_delay, DEVICE_NAME, ARCHITECTURE
+from config import (
+    RO_STAGES,
+    calculate_ro_delay_ns,
+    validate_ro_delay,
+    DEVICE_NAME,
+    ARCHITECTURE,
+    RO_NOMINAL_MHZ,
+    RO_NOMINAL_DELAY_NS
+)
 
 
 # =============================================================================
@@ -139,43 +147,43 @@ SENSOR_CONFIG: Dict[str, Dict[str, Any]] = {
     "RO_Frequency": {
         "display_name": "Ring Oscillator Frequency",
         "unit": "MHz",
-        "nominal": 250.0,
+        "nominal": 436.0,
         "description": "5-stage Ring Oscillator frequency tracking logic gate propagation delay",
         "physical_min": 10.0,
-        "physical_max": 500.0,
-        "operating_min": 245.0,   # Nominal healthy oscillation envelope
-        "operating_max": 255.0,
-        "warning_low": 238.0,     # Moderate timing degradation (drop > 2.8%)
-        "warning_high": 258.0,    # Slight unexpected overclock
-        "critical_low": 238.0,    # Hard limit: severe aging / NBTI slowing (drop > 4.8%)
-        "critical_high": 265.0,   # Hard limit: abnormal over-frequency / clock fault
+        "physical_max": 800.0,
+        "operating_min": 427.0,   # Nominal healthy oscillation envelope (nominal ± 2.0%)
+        "operating_max": 445.0,
+        "warning_low": 423.0,     # Moderate timing degradation (drop > 3.0%, tau increase > 3.1%)
+        "warning_high": 447.0,    # Slight unexpected overclock / voltage variation
+        "critical_low": 412.0,    # Hard limit: severe aging / NBTI slowing (drop > 5.5%, tau degradation > 5.8%)
+        "critical_high": 460.0,   # Hard limit: abnormal over-frequency / clock fault
         "is_hard_override": True,
-        "source": "Project 28nm BTI/HCI Aging Degradation Model",
+        "source": "Basys 3 Physical Measurement & 28nm Artix-7 Propagation Model",
         # Backward compatibility aliases
         "warning_drop_pct": 3.0,
         "critical_drop_pct": 5.5,
         "min_valid": 50.0,
-        "max_valid": 400.0
+        "max_valid": 800.0
     },
     "RO_Delay_ns": {
         "display_name": "Derived RO Stage Delay",
         "unit": "ns",
-        "nominal": 0.4000,
+        "nominal": 0.2294,        # 1000.0 / (2 * 5 * 436.0) = 0.229357... -> 0.2294 ns (229.4 ps)
         "description": "Derived logic propagation delay per inverter stage (tau = 100 / f_MHz)",
-        "physical_min": 0.10,
+        "physical_min": 0.05,
         "physical_max": 2.50,
-        "operating_min": 0.3920,  # Corresponds to 255 MHz
-        "operating_max": 0.4082,  # Corresponds to 245 MHz
-        "warning_low": 0.3876,
-        "warning_high": 0.4202,   # Corresponds to 238 MHz
-        "critical_low": 0.3770,   # Hard limit: impossible fast gate delay
-        "critical_high": 0.4202,  # Hard limit: severe delay increase > 5.0%
+        "operating_min": 0.2247,  # Corresponds to 445.0 MHz (100 / 445.0)
+        "operating_max": 0.2342,  # Corresponds to 427.0 MHz (100 / 427.0)
+        "warning_low": 0.2237,    # Corresponds to 447.0 MHz (100 / 447.0)
+        "warning_high": 0.2364,   # Corresponds to 423.0 MHz (+3.1% delay increase)
+        "critical_low": 0.2174,   # Corresponds to 460.0 MHz
+        "critical_high": 0.2427,  # Corresponds to 412.0 MHz (+5.8% delay increase)
         "is_hard_override": True,
         "source": "Deterministic Physical Formula (tau = 1000 / 2*N*f for N=5 stages)",
         # Backward compatibility aliases
         "warning_increase_pct": 3.0,
-        "critical_increase_pct": 6.0,
-        "min_valid": 0.10,
+        "critical_increase_pct": 5.5,
+        "min_valid": 0.05,
         "max_valid": 2.50
     },
     "Error_Rate": {
@@ -218,6 +226,37 @@ STATUS_BG_COLORS = {
     "Degraded": "rgba(255, 145, 0, 0.14)",
     "Critical": "rgba(255, 23, 68, 0.16)"
 }
+
+
+def get_error_risk_label(error_rate: float) -> Tuple[str, str, str]:
+    """
+    Independent classification of functional Error Risk derived strictly from Error_Rate.
+    Decoupled from overall FPGA Health (which may be degraded by temperature, supply rails, or RO timing).
+
+    Engineering Thresholds (PRBS-7 monitor):
+      - Error_Rate >= 0.002000 (>= 2000 ppm): "High" (Critical functional bit errors)
+      - Error_Rate >= 0.000500 (>= 500 ppm):  "Medium" (Elevated soft error activity)
+      - Error_Rate <  0.000500 (< 500 ppm):   "Low" (Nominal / negligible bit error rate)
+
+    Returns:
+      (risk_label, risk_color, description)
+    """
+    try:
+        err = float(error_rate)
+    except (TypeError, ValueError):
+        err = 0.0
+
+    cfg = SENSOR_CONFIG.get("Error_Rate", {})
+    crit_high = cfg.get("critical_high", 0.002000)
+    op_max = cfg.get("operating_max", 0.000500)
+
+    if err >= crit_high:
+        return "High", HEALTH_COLORS["Critical"], f"Bit Error Rate ({err:.6f}) exceeds critical limit ({crit_high:.6f})"
+    elif err >= op_max:
+        return "Medium", HEALTH_COLORS["Warning"], f"Bit Error Rate ({err:.6f}) is elevated above nominal floor ({op_max:.6f})"
+    else:
+        return "Low", HEALTH_COLORS["Healthy"], f"Bit Error Rate ({err:.6f}) is nominal (< {op_max:.6f})"
+
 
 
 # =============================================================================
@@ -490,7 +529,7 @@ def evaluate_single_channel(
                 reason=f"RO Frequency ({val_float:.1f} MHz) abnormally high (expected {op_str}).",
                 provenance=provenance
             )
-        elif val_float < op_min:
+        elif val_float < op_min or val_float > warn_high:
             return ChannelEvaluation(
                 channel=channel,
                 value=val_float,
@@ -499,10 +538,10 @@ def evaluate_single_channel(
                 nominal=nom,
                 operating_range_str=op_str,
                 severity=LimitSeverity.WARNING,
-                status_label="WARNING (TIMING DELAY DRIFT)",
+                status_label="WARNING (TIMING DELAY DRIFT)" if val_float < op_min else "WARNING (SLIGHT OVERCLOCK)",
                 is_violation=True,
                 is_hard_override=True,
-                reason=f"RO Frequency ({val_float:.1f} MHz) shows measurable timing degradation from nominal {nom:.1f} MHz.",
+                reason=f"RO Frequency ({val_float:.1f} MHz) shows measurable timing degradation from nominal {nom:.1f} MHz." if val_float < op_min else f"RO Frequency ({val_float:.1f} MHz) is outside nominal operating range {op_str}.",
                 provenance=provenance
             )
 
@@ -522,7 +561,22 @@ def evaluate_single_channel(
                 reason=f"Derived stage delay ({val_float:.4f} ns) exceeds critical timing margin {crit_high:.4f} ns.",
                 provenance=provenance
             )
-        elif val_float > op_max:
+        elif val_float <= crit_low:
+            return ChannelEvaluation(
+                channel=channel,
+                value=val_float,
+                display_name=disp,
+                unit=unit,
+                nominal=nom,
+                operating_range_str=op_str,
+                severity=LimitSeverity.CRITICAL,
+                status_label="CRITICAL (ABNORMAL FAST GATE DELAY)",
+                is_violation=True,
+                is_hard_override=True,
+                reason=f"Derived stage delay ({val_float:.4f} ns) abnormally fast (expected {op_str}).",
+                provenance=provenance
+            )
+        elif val_float > op_max or val_float < warn_low:
             return ChannelEvaluation(
                 channel=channel,
                 value=val_float,
@@ -531,10 +585,10 @@ def evaluate_single_channel(
                 nominal=nom,
                 operating_range_str=op_str,
                 severity=LimitSeverity.WARNING,
-                status_label="WARNING (TIMING MARGIN REDUCTION)",
+                status_label="WARNING (TIMING MARGIN REDUCTION)" if val_float > op_max else "WARNING (FAST TIMING DRIFT)",
                 is_violation=True,
                 is_hard_override=True,
-                reason=f"Derived stage delay ({val_float:.4f} ns) is elevated above nominal {nom:.4f} ns.",
+                reason=f"Derived stage delay ({val_float:.4f} ns) is elevated above nominal {nom:.4f} ns." if val_float > op_max else f"Derived stage delay ({val_float:.4f} ns) is outside nominal operating range {op_str}.",
                 provenance=provenance
             )
 

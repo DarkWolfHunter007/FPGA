@@ -330,7 +330,7 @@ with st.sidebar:
             st.markdown("""
             **Interactive Switches (`sw[3:0]`):**
             - `sw[1]` (Pin V16): **Ring Oscillator Run / Halt**
-              *(0 = Run @ ~250 MHz, 1 = Halt to test 0 MHz delay drift)*
+              *(0 = Run @ ~436 MHz, 1 = Halt to test 0 MHz delay drift)*
             - `sw[2]` (Pin W16): **Synthetic Fault Injection**
               *(0 = Nominal PRBS-7, 1 = Injects bit errors to trigger Warning/Degraded)*
             - `sw[0]` (Pin V17): **Telemetry Format**
@@ -351,7 +351,7 @@ with st.sidebar:
                 st.session_state.est_vccint = "1.000"
                 st.session_state.est_vccaux = "1.800"
                 st.session_state.est_vccbram = "1.000"
-                st.session_state.est_ro_freq = "250.0"
+                st.session_state.est_ro_freq = "436.0"
                 st.session_state.est_err_rate = "0.00001"
                 st.rerun()
         with col_ep2:
@@ -360,7 +360,7 @@ with st.sidebar:
                 st.session_state.est_vccint = "0.995"
                 st.session_state.est_vccaux = "1.795"
                 st.session_state.est_vccbram = "0.996"
-                st.session_state.est_ro_freq = "242.0"
+                st.session_state.est_ro_freq = "424.0"
                 st.session_state.est_err_rate = "0.0012"
                 st.rerun()
         with col_ep3:
@@ -369,7 +369,7 @@ with st.sidebar:
                 st.session_state.est_vccint = "0.988"
                 st.session_state.est_vccaux = "1.788"
                 st.session_state.est_vccbram = "0.990"
-                st.session_state.est_ro_freq = "235.0"
+                st.session_state.est_ro_freq = "410.0"
                 st.session_state.est_err_rate = "0.0030"
                 st.rerun()
 
@@ -387,7 +387,7 @@ with st.sidebar:
         st.caption("Enter one or more available values. Blank channels default to nominal physical baselines.")
 
         in_temp = st.text_input("Temperature (°C)", value=st.session_state.est_temp, placeholder="e.g. 45.0 (nom: 35.0, 0-125°C)", key="input_temp")
-        in_ro_freq = st.text_input("RO Frequency (MHz)", value=st.session_state.est_ro_freq, placeholder="e.g. 242.0 (nom: 250.0, 50-400MHz)", key="input_ro_freq")
+        in_ro_freq = st.text_input("RO Frequency (MHz)", value=st.session_state.est_ro_freq, placeholder="e.g. 436.0 (nom: 436.0, 50-800MHz)", key="input_ro_freq")
         in_vccint = st.text_input("VCCINT Core Voltage (V)", value=st.session_state.est_vccint, placeholder="e.g. 1.000 (nom: 1.000, 0.5-1.5V)", key="input_vccint")
         in_vccaux = st.text_input("VCCAUX Aux Voltage (V)", value=st.session_state.est_vccaux, placeholder="e.g. 1.800 (nom: 1.800, 1.0-2.5V)", key="input_vccaux")
         in_vccbram = st.text_input("VCCBRAM BRAM Voltage (V)", value=st.session_state.est_vccbram, placeholder="e.g. 1.000 (nom: 1.000, 0.5-1.5V)", key="input_vccbram")
@@ -573,11 +573,11 @@ except Exception as e:
 # Baseline and shift metrics
 baseline = meta.get("baseline", {})
 curr_ro_freq = float(latest["RO_Frequency"])
-base_ro_freq = float(baseline.get("RO_Frequency", 250.0))
+base_ro_freq = float(baseline.get("RO_Frequency", 436.0))
 ro_freq_shift = ((curr_ro_freq - base_ro_freq) / base_ro_freq) * 100.0
 
 curr_ro_delay = float(latest["RO_Delay_ns"])
-base_ro_delay = float(baseline.get("RO_Delay_ns", 0.4000))
+base_ro_delay = float(baseline.get("RO_Delay_ns", 0.2294))
 ro_delay_shift = ((curr_ro_delay - base_ro_delay) / base_ro_delay) * 100.0
 
 curr_temp = float(latest["Temperature"])

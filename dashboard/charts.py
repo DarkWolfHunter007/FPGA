@@ -74,7 +74,7 @@ def create_temperature_chart(df: pd.DataFrame, baseline_temp: float = 35.0) -> a
     return apply_dark_theme(line + base_rule + warn_rule)
 
 
-def create_ro_frequency_chart(df: pd.DataFrame, baseline_freq: float = 250.0) -> alt.Chart:
+def create_ro_frequency_chart(df: pd.DataFrame, baseline_freq: float = 436.0) -> alt.Chart:
     """Graph 1: Ring Oscillator Frequency Trend (MHz) with baseline reference line."""
     plot_df = df.reset_index()
     plot_df["Sample_Index"] = plot_df.index
@@ -103,7 +103,7 @@ def create_ro_frequency_chart(df: pd.DataFrame, baseline_freq: float = 250.0) ->
     return apply_dark_theme(line + base_rule)
 
 
-def create_ro_delay_chart(df: pd.DataFrame, baseline_delay: float = 0.4000) -> alt.Chart:
+def create_ro_delay_chart(df: pd.DataFrame, baseline_delay: float = 0.2294) -> alt.Chart:
     """Graph 2: Ring Oscillator Delay Trend (Derived RO Stage Delay in ns) with baseline reference line."""
     plot_df = df.reset_index()
     plot_df["Sample_Index"] = plot_df.index

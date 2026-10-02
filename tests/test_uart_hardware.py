@@ -97,7 +97,10 @@ class TestFPGAPhysicalUART(unittest.TestCase):
     def test_ro_delay_derivation_benchmarks(self):
         # Formula: tau = 1000 / (2 * 5 * f_MHz) = 100 / f_MHz
         test_cases = [
-            (250.0, 0.4000),  # Nominal
+            (436.0, 0.2294),  # Physical Basys 3 nominal
+            (424.0, 0.2358),  # Timing delay drift (warning region)
+            (410.0, 0.2439),  # Severe degradation (degraded region)
+            (250.0, 0.4000),  # Historical benchmark
             (240.0, 0.4167),  # Mild degradation (100 / 240 = 0.416666...)
             (235.0, 0.4255),  # Moderate degradation (100 / 235 = 0.425531...)
             (225.0, 0.4444),  # Severe degradation
@@ -192,8 +195,8 @@ class TestFPGAPhysicalUART(unittest.TestCase):
                 "VCCINT": 1.000,
                 "VCCAUX": 1.800,
                 "VCCBRAM": 1.000,
-                "RO_Frequency": 250.0 - 0.2 * i,
-                "RO_Delay_ns": calculate_ro_delay_ns(250.0 - 0.2 * i, RO_STAGES),
+                "RO_Frequency": 436.0 - 0.2 * i,
+                "RO_Delay_ns": calculate_ro_delay_ns(436.0 - 0.2 * i, RO_STAGES),
                 "Error_Rate": 0.000010
             }
             ds.buffer.append(mock_pkt)
@@ -217,7 +220,7 @@ class TestFPGAPhysicalUART(unittest.TestCase):
             self.skipTest("ML Model bundle not available.")
 
         # Simulate hardware packet under aging degradation (e.g., heated FPGA + slowed RO)
-        deg_json = '{"Temperature":53.0,"VCCINT":0.990,"VCCAUX":1.790,"VCCBRAM":0.992,"RO_Frequency":236.0,"Error_Rate":0.002800}'
+        deg_json = '{"Temperature":53.0,"VCCINT":0.990,"VCCAUX":1.790,"VCCBRAM":0.992,"RO_Frequency":410.0,"Error_Rate":0.002800}'
         parsed = self.receiver._parse_raw_line(deg_json)
         self.assertIsNotNone(parsed)
 
@@ -254,8 +257,8 @@ class TestFPGAPhysicalUART(unittest.TestCase):
             "ro_frequency": float(parsed["RO_Frequency"]),
             "ro_delay": float(parsed["RO_Delay_ns"]),
             "error_rate": float(parsed["Error_Rate"]),
-            "ro_freq_shift_pct": ((float(parsed["RO_Frequency"]) - 250.0) / 250.0) * 100.0,
-            "ro_delay_shift_pct": ((float(parsed["RO_Delay_ns"]) - 0.4000) / 0.4000) * 100.0,
+            "ro_freq_shift_pct": ((float(parsed["RO_Frequency"]) - 436.0) / 436.0) * 100.0,
+            "ro_delay_shift_pct": ((float(parsed["RO_Delay_ns"]) - 0.2294) / 0.2294) * 100.0,
             "temp_shift": float(parsed["Temperature"]) - 35.0,
             "source": "LIVE_UART",
             "completeness_str": "6 / 6",

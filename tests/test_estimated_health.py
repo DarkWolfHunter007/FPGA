@@ -101,8 +101,8 @@ class TestEstimatedHealthAssessment(unittest.TestCase):
 
         # Temperature is user-provided, remaining are nominal baselines
         self.assertAlmostEqual(latest["Temperature"], 52.5, places=2)
-        self.assertAlmostEqual(latest["RO_Frequency"], 250.0, places=2)
-        self.assertAlmostEqual(latest["RO_Delay_ns"], 0.4000, places=4)
+        self.assertAlmostEqual(latest["RO_Frequency"], 436.0, places=2)
+        self.assertAlmostEqual(latest["RO_Delay_ns"], 0.2294, places=4)
         self.assertAlmostEqual(latest["VCCINT"], 1.000, places=3)
 
     # -------------------------------------------------------------------------
@@ -182,7 +182,7 @@ class TestEstimatedHealthAssessment(unittest.TestCase):
         self.assertFalse(valid)
         self.assertTrue(any("Ring Oscillator Frequency" in e for e in errors))
 
-        valid2, errors2, _ = self.est_source.set_inputs({"RO_Frequency": 800.0})
+        valid2, errors2, _ = self.est_source.set_inputs({"RO_Frequency": 850.0})
         self.assertFalse(valid2)
         self.assertTrue(any("Ring Oscillator Frequency" in e for e in errors2))
 
@@ -203,25 +203,27 @@ class TestEstimatedHealthAssessment(unittest.TestCase):
     # -------------------------------------------------------------------------
     def test_ro_delay_precision(self):
         # tau = 1000 / (2 * 5 * f_MHz) = 100.0 / f_MHz
+        # 436.0 MHz (Physical Basys 3 nominal) -> 0.2294 ns
+        delay_436 = calculate_ro_delay_ns(436.0, stages=RO_STAGES)
+        self.assertEqual(delay_436, 0.2294)
+
+        # 424.0 MHz (Warning threshold region) -> 0.2358 ns
+        delay_424 = calculate_ro_delay_ns(424.0, stages=RO_STAGES)
+        self.assertEqual(delay_424, 0.2358)
+
+        # 410.0 MHz (Degraded threshold region) -> 0.2439 ns
+        delay_410 = calculate_ro_delay_ns(410.0, stages=RO_STAGES)
+        self.assertEqual(delay_410, 0.2439)
+
         # 250 MHz -> 0.4000 ns
         delay_250 = calculate_ro_delay_ns(250.0, stages=RO_STAGES)
         self.assertEqual(delay_250, 0.4000)
 
-        # 240 MHz -> 0.4167 ns (100 / 240 = 0.416666... -> 0.4167)
-        delay_240 = calculate_ro_delay_ns(240.0, stages=RO_STAGES)
-        self.assertEqual(delay_240, 0.4167)
-
-        # 235 MHz -> 0.4255 ns (100 / 235 = 0.425531... -> 0.4255)
-        delay_235 = calculate_ro_delay_ns(235.0, stages=RO_STAGES)
-        self.assertEqual(delay_235, 0.4255)
-
         # Sanity check validation
+        is_valid_436, _ = validate_ro_delay(436.0, RO_STAGES, delay_436)
+        self.assertTrue(is_valid_436)
         is_valid_250, _ = validate_ro_delay(250.0, RO_STAGES, delay_250)
         self.assertTrue(is_valid_250)
-        is_valid_240, _ = validate_ro_delay(240.0, RO_STAGES, delay_240)
-        self.assertTrue(is_valid_240)
-        is_valid_235, _ = validate_ro_delay(235.0, RO_STAGES, delay_235)
-        self.assertTrue(is_valid_235)
 
     # -------------------------------------------------------------------------
     # Test 10: Missing-value handling & provenance labeling
@@ -313,8 +315,8 @@ class TestEstimatedHealthAssessment(unittest.TestCase):
             "ro_frequency": float(latest["RO_Frequency"]),
             "ro_delay": float(latest["RO_Delay_ns"]),
             "error_rate": float(latest["Error_Rate"]),
-            "ro_freq_shift_pct": ((float(latest["RO_Frequency"]) - 250.0) / 250.0) * 100.0,
-            "ro_delay_shift_pct": ((float(latest["RO_Delay_ns"]) - 0.4000) / 0.4000) * 100.0,
+            "ro_freq_shift_pct": ((float(latest["RO_Frequency"]) - 436.0) / 436.0) * 100.0,
+            "ro_delay_shift_pct": ((float(latest["RO_Delay_ns"]) - 0.2294) / 0.2294) * 100.0,
             "temp_shift": float(latest["Temperature"]) - 35.0,
             "source": meta["source_type"],
             "completeness_str": meta["completeness_str"],

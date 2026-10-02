@@ -29,7 +29,7 @@ module fpga_health_top (
     wire sw_test_flag;    // sw[3]: General test flag
 
     assign sw_mode_select  = sw[0];
-    assign sw_ro_enable    = sw[1] | ~sw[1]; // Default active unless overridden, or sw[1] controls
+    assign sw_ro_enable    = ~sw[1]; // sw[1]=0: RO enabled (default), sw[1]=1: RO halted
     assign sw_error_inject = sw[2];
     assign sw_test_flag    = sw[3];
 
@@ -59,7 +59,7 @@ module fpga_health_top (
     wire ro_clk_out;
 
     ring_oscillator u_ring_osc (
-        .i_en(sw[1] ? 1'b0 : 1'b1), // sw[1]=1 can halt for test, default running
+        .i_en(sw_ro_enable),
         .o_ro_clk(ro_clk_out)
     );
 
@@ -160,16 +160,16 @@ module fpga_health_top (
     // =========================================================================
     // 7. On-Board Diagnostic LEDs
     // =========================================================================
-    // Local hardware classification rules:
-    // Degraded: Temp >= 52°C OR RO Freq < 238 MHz OR Error Rate >= 1000 ppm
-    // Warning:  Temp >= 45°C OR RO Freq < 245 MHz OR Error Rate >= 100 ppm
+    // Local hardware classification rules (Calibrated for 436.0 MHz physical baseline):
+    // Degraded: Temp >= 52°C OR RO Freq < 412 MHz OR Error Rate >= 1000 ppm
+    // Warning:  Temp >= 45°C OR RO Freq < 423 MHz OR Error Rate >= 100 ppm
     // Healthy:  Nominal
     wire is_degraded;
     wire is_warning;
     wire is_healthy;
 
-    assign is_degraded = (temp_c_x10 >= 16'd520) || (ro_freq_mhz_x10 < 16'd2380) || (error_count_ppm >= 20'd1000);
-    assign is_warning  = !is_degraded && ((temp_c_x10 >= 16'd450) || (ro_freq_mhz_x10 < 16'd2450) || (error_count_ppm >= 20'd100));
+    assign is_degraded = (temp_c_x10 >= 16'd520) || (ro_freq_mhz_x10 < 16'd4120) || (error_count_ppm >= 20'd1000);
+    assign is_warning  = !is_degraded && ((temp_c_x10 >= 16'd450) || (ro_freq_mhz_x10 < 16'd4230) || (error_count_ppm >= 20'd100));
     assign is_healthy  = !is_degraded && !is_warning;
 
     assign led[0]  = heartbeat_led;       // 1 Hz Heartbeat
