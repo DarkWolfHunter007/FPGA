@@ -58,6 +58,51 @@ class TestFPGAPhysicalUART(unittest.TestCase):
         detailed = FPGAUARTReceiver.list_detailed_ports()
         self.assertIsInstance(detailed, list)
 
+        # Test system-wide port scanner
+        scanned = FPGAUARTReceiver.scan_all_ports_detailed(current_receiver=self.receiver, probe_telemetry=False)
+        self.assertIsInstance(scanned, list)
+        self.assertGreater(len(scanned), 0)
+        for item in scanned:
+            self.assertIn("device", item)
+            self.assertIn("category", item)
+            self.assertIn("status_label", item)
+            self.assertIn("is_usb", item)
+            self.assertIn("is_bluetooth", item)
+
+    def test_device_classification_signatures(self):
+        class DummyPort:
+            def __init__(self, desc, hwid, vid=None, pid=None, mfg=None):
+                self.description = desc
+                self.hwid = hwid
+                self.vid = vid
+                self.pid = pid
+                self.manufacturer = mfg
+
+        # Basys 3 FTDI FT2232
+        p1 = DummyPort("USB Serial Port (COM10)", "USB VID:PID=0403:6010 SER=210183B3150CB", 0x0403, 0x6010, "FTDI")
+        cat1, _, is_usb1 = FPGAUARTReceiver._classify_port_device(p1)
+        self.assertIn("Basys 3", cat1)
+        self.assertTrue(is_usb1)
+
+        # CP210x Bridge
+        p2 = DummyPort("Silicon Labs CP210x USB to UART Bridge", "USB VID:PID=10C4:EA60", 0x10C4, 0xEA60, "Silicon Labs")
+        cat2, _, is_usb2 = FPGAUARTReceiver._classify_port_device(p2)
+        self.assertIn("CP210x", cat2)
+        self.assertTrue(is_usb2)
+
+        # Bluetooth Virtual Link
+        p3 = DummyPort("Standard Serial over Bluetooth link (COM5)", "BTHENUM\\{00001101-0000-1000-8000-00805F9B34FB}", None, None, "Microsoft")
+        cat3, _, is_usb3 = FPGAUARTReceiver._classify_port_device(p3)
+        self.assertIn("Bluetooth", cat3)
+        self.assertFalse(is_usb3)
+
+    def test_probe_port_safety(self):
+        # Probing a non-existent COM port should return clean status without crashing
+        res = FPGAUARTReceiver.probe_port("COM999", timeout=0.1)
+        self.assertIn(res["status"], ["NOT_FOUND", "ERROR"])
+        self.assertFalse(res["telemetry"])
+
+
     # -------------------------------------------------------------------------
     # Test 2: Handshake Message Parsing ("HELLO FPGA")
     # -------------------------------------------------------------------------

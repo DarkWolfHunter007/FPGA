@@ -133,13 +133,13 @@ if "uart_source" not in st.session_state:
     initial_port = detected_fpga_port or "COM10"
     st.session_state.uart_source = LiveUARTDataSource(port=initial_port)
 
-# If in Physical UART mode and port is closed, attempt auto-connect to detected port
+# If in Physical UART mode and port is closed, attempt auto-connect (unless user explicitly disconnected)
 if st.session_state.data_mode == "Physical UART Stream (Artix-7)":
-    if not st.session_state.uart_source.receiver.is_port_open and st.session_state.get("auto_connect", True):
-        target_port = detected_fpga_port or st.session_state.uart_source.receiver.port
-        if target_port and target_port not in ("NONE", "No Ports Detected"):
-            st.session_state.uart_source.receiver.port = target_port
-            st.session_state.uart_source.connect()
+    if not st.session_state.get("user_disconnected", False):
+        if not st.session_state.uart_source.receiver.is_port_open and st.session_state.get("auto_connect", True):
+            target_port = st.session_state.uart_source.receiver.port or detected_fpga_port
+            if target_port and target_port not in ("NONE", "No Ports Detected"):
+                st.session_state.uart_source.connect()
 
 if "estimated_source" not in st.session_state:
     st.session_state.estimated_source = EstimatedDataSource()
@@ -237,13 +237,19 @@ with st.sidebar:
         port_map = FPGAUARTReceiver.get_port_display_map()
         display_labels = list(port_map.keys())
 
-        # Determine index of current or detected port
+        # Determine index of current port
         cur_device = rcv.port
         default_idx = 0
         for i, lbl in enumerate(display_labels):
-            if port_map[lbl] == cur_device or (detected_fpga_port and port_map[lbl] == detected_fpga_port):
+            if port_map[lbl] == cur_device:
                 default_idx = i
                 break
+        else:
+            if detected_fpga_port:
+                for i, lbl in enumerate(display_labels):
+                    if port_map[lbl] == detected_fpga_port:
+                        default_idx = i
+                        break
 
         col_port, col_ref = st.columns([4, 1])
         with col_port:
@@ -260,8 +266,12 @@ with st.sidebar:
                 rcv.disconnect()
             rcv.port = selected_device
             st.session_state.uart_source.buffer.clear()
+            st.session_state.uart_connect_error = None
+            st.session_state.user_disconnected = False
             if st.session_state.get("auto_connect", True):
-                st.session_state.uart_source.connect()
+                ok = st.session_state.uart_source.connect()
+                if not ok:
+                    st.session_state.uart_connect_error = rcv.last_error_msg
             st.rerun()
 
         st.caption(f"**Target Device**: {DEVICE_NAME} (`{selected_device}`)")
@@ -277,6 +287,7 @@ with st.sidebar:
         with col_u1:
             if not rcv.is_port_open:
                 if st.button("🔌 Connect", width="stretch"):
+                    st.session_state.user_disconnected = False
                     ok = st.session_state.uart_source.connect()
                     if not ok:
                         st.session_state.uart_connect_error = rcv.last_error_msg
@@ -288,6 +299,7 @@ with st.sidebar:
         with col_u2:
             if rcv.is_port_open:
                 if st.button("🛑 Disconnect", width="stretch"):
+                    st.session_state.user_disconnected = True
                     st.session_state.uart_source.disconnect()
                     st.session_state.uart_connect_error = None
                     st.rerun()
@@ -296,6 +308,93 @@ with st.sidebar:
 
         if st.session_state.get("uart_connect_error"):
             st.error(f"⚠️ {st.session_state.uart_connect_error}")
+
+        # Manual Port Input
+        with st.expander("✏️ Manual Port Entry / Custom Port", expanded=False):
+            st.caption("Enter any custom COM port name (e.g. COM11, COM4, /dev/ttyUSB0):")
+            col_m1, col_m2 = st.columns([3, 1])
+            with col_m1:
+                custom_com = st.text_input("Port Name", placeholder="e.g. COM11", label_visibility="collapsed")
+            with col_m2:
+                if st.button("Switch", key="btn_apply_custom_port"):
+                    if custom_com.strip():
+                        new_p = custom_com.strip().upper()
+                        if rcv.is_port_open:
+                            rcv.disconnect()
+                        rcv.port = new_p
+                        st.session_state.uart_source.buffer.clear()
+                        st.session_state.user_disconnected = False
+                        if st.session_state.get("auto_connect", True):
+                            st.session_state.uart_source.connect()
+                        st.rerun()
+
+        # Comprehensive System-Wide Port Tracker & Diagnostic Sniffer
+        with st.expander("🔍 All COM Ports Diagnostic Tracker", expanded=False):
+            st.markdown("Track and probe **every** serial port on the system to locate the FPGA board:")
+            
+            probe_all = st.button("⚡ Probe All USB Ports for FPGA Telemetry", help="Actively tests each USB port to detect live FPGA JSON telemetry.")
+
+            all_ports_meta = FPGAUARTReceiver.scan_all_ports_detailed(
+                current_receiver=rcv,
+                probe_telemetry=probe_all
+            )
+
+            if not all_ports_meta:
+                st.warning("No COM ports found on this system. Check USB cable and drivers.")
+            else:
+                for p_meta in all_ports_meta:
+                    p_name = p_meta["device"]
+                    p_cat = p_meta["category"]
+                    p_desc = p_meta["description"]
+                    p_stat = p_meta["status_label"]
+                    p_cur = p_meta["is_current"]
+                    p_tel = p_meta["telemetry_detected"]
+                    p_hwid = p_meta.get("hwid", "")
+
+                    # Status indicator dot
+                    if p_cur and rcv.is_streaming:
+                        badge = "🟢 **STREAMING LIVE**"
+                    elif p_tel:
+                        badge = "🟢 **FPGA TELEMETRY DETECTED**"
+                    elif p_cur:
+                        badge = "🟡 **ACTIVE (CONNECTED)**"
+                    elif "LOCKED" in p_meta.get("status", ""):
+                        badge = "🔴 **PORT LOCKED / IN USE**"
+                    elif p_meta.get("is_bluetooth"):
+                        badge = "⚪ **BLUETOOTH LINK**"
+                    else:
+                        badge = "🔵 **AVAILABLE**"
+
+                    st.markdown(f"**{p_name}** — `{p_cat}`")
+                    st.caption(f"{badge} | {p_stat}\n\n*HWID: {p_hwid[:45]}...*")
+
+                    col_pa, col_pb = st.columns(2)
+                    with col_pa:
+                        if not p_cur:
+                            if st.button(f"🔌 Use {p_name}", key=f"track_btn_use_{p_name}"):
+                                if rcv.is_port_open:
+                                    rcv.disconnect()
+                                rcv.port = p_name
+                                st.session_state.uart_source.buffer.clear()
+                                st.session_state.user_disconnected = False
+                                ok = st.session_state.uart_source.connect()
+                                if not ok:
+                                    st.session_state.uart_connect_error = rcv.last_error_msg
+                                else:
+                                    st.session_state.uart_connect_error = None
+                                st.rerun()
+                        else:
+                            st.info("👈 Currently selected")
+                    with col_pb:
+                        if not p_cur and not p_meta.get("is_bluetooth"):
+                            if st.button(f"🔍 Test {p_name}", key=f"track_btn_test_{p_name}"):
+                                p_res = FPGAUARTReceiver.probe_port(p_name, timeout=0.3)
+                                st.write(p_res["message"])
+                                if p_res.get("raw_sample"):
+                                    st.code(p_res["raw_sample"], language="json")
+                    st.markdown("---")
+
+            st.caption("ℹ️ **Why COM port might not change when switching USB sockets:** Windows binds COM ports to FTDI chip EEPROM serial numbers. Moving the Basys 3 cable between physical ports often keeps it assigned to the same COM port.")
 
         with st.expander("⚡ FPGA Hardware Programmer", expanded=False):
             st.markdown("Burn the precompiled health monitor bitstream (Ring Oscillator, XADC, PRBS-7, UART) into the board:")
