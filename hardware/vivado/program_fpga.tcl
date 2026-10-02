@@ -5,10 +5,17 @@
 
 set script_dir [file dirname [file normalize [info script]]]
 set proj_root  [file normalize "$script_dir/.."]
-set bitstream  [file normalize "$proj_root/build/fpga_health_top.bit"]
+set candidate_bits [list "C:/vivado_build/build/fpga_health_top.bit" "$proj_root/build/fpga_health_top.bit" "$proj_root/fpga_health_top.bit"]
+set bitstream ""
+foreach c $candidate_bits {
+    if {[file exists $c]} {
+        set bitstream $c
+        break
+    }
+}
 
-if {![file exists $bitstream]} {
-    puts "ERROR: Bitstream file not found at: $bitstream"
+if {$bitstream eq ""} {
+    puts "ERROR: Bitstream file not found."
     puts "Please run build_bitstream.tcl first to compile the design."
     exit 1
 }
@@ -31,6 +38,15 @@ if {$target_device eq ""} {
 
 current_hw_device $target_device
 refresh_hw_device -update_hw_probes false [current_hw_device]
+
+# Automatically backup existing device program if not already backed up
+set backup_file [file normalize "$proj_root/backup_original.bin"]
+if {![file exists $backup_file]} {
+    puts "--> Backing up current FPGA program to: $backup_file..."
+    catch { readback_hw_device -bin_file $backup_file -force [current_hw_device] }
+} else {
+    puts "--> Existing backup found at: $backup_file"
+}
 
 # Set bitstream file property and program
 set_property PROGRAM.FILE $bitstream [current_hw_device]

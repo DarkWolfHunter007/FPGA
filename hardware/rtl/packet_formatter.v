@@ -98,7 +98,7 @@ module packet_formatter #(
                         buffer[36] <= "M"; buffer[37] <= "o"; buffer[38] <= "n"; buffer[39] <= "i";
                         buffer[40] <= "t"; buffer[41] <= "o"; buffer[42] <= "r"; buffer[43] <= " ";
                         buffer[44] <= "O"; buffer[45] <= "n"; buffer[46] <= "l"; buffer[47] <= "i";
-                        buffer[48] <= "n"; buffer[49] <= "e"; buffer[50] <= "\r"; buffer[51] <= "\n";
+                        buffer[48] <= "n"; buffer[49] <= "e"; buffer[50] <= 8'h0D; buffer[51] <= 8'h0A;
                         pkt_len    <= 8'd52;
                     end else begin
                         // Mode 0: Full JSON Telemetry Packet
@@ -178,7 +178,7 @@ module packet_formatter #(
                         buffer[107] <= to_ascii(i_error_count_ppm % 20'd10);
 
                         // }\r\n
-                        buffer[108] <= "}"; buffer[109] <= "\r"; buffer[110] <= "\n";
+                        buffer[108] <= "}"; buffer[109] <= 8'h0D; buffer[110] <= 8'h0A;
                         pkt_len     <= 8'd111;
                     end
 

@@ -240,29 +240,33 @@ class LiveUARTDataSource:
         self.receiver.disconnect()
 
     def poll_hardware(self) -> Optional[Dict[str, Any]]:
-        packet = self.receiver.read_packet()
-        if packet and "Temperature" in packet:
-            # Clean numeric data for DataFrame buffer
-            meas_dict = {
-                "Timestamp": packet.get("Timestamp", time.time()),
-                "Temperature": float(packet["Temperature"]),
-                "VCCINT": float(packet["VCCINT"]),
-                "VCCAUX": float(packet["VCCAUX"]),
-                "VCCBRAM": float(packet["VCCBRAM"]),
-                "RO_Frequency": float(packet["RO_Frequency"]),
-                "RO_Delay_ns": float(packet["RO_Delay_ns"]),
-                "Error_Rate": float(packet["Error_Rate"])
-            }
-            self.buffer.append(meas_dict)
-            if len(self.buffer) > self.buffer_size:
-                self.buffer.pop(0)
+        last_packet = None
+        while True:
+            packet = self.receiver.read_packet()
+            if not packet:
+                break
+            last_packet = packet
+            if "Temperature" in packet:
+                meas_dict = {
+                    "Timestamp": packet.get("Timestamp", time.time()),
+                    "Temperature": float(packet["Temperature"]),
+                    "VCCINT": float(packet["VCCINT"]),
+                    "VCCAUX": float(packet["VCCAUX"]),
+                    "VCCBRAM": float(packet["VCCBRAM"]),
+                    "RO_Frequency": float(packet["RO_Frequency"]),
+                    "RO_Delay_ns": float(packet["RO_Delay_ns"]),
+                    "Error_Rate": float(packet["Error_Rate"])
+                }
+                self.buffer.append(meas_dict)
+                if len(self.buffer) > self.buffer_size:
+                    self.buffer.pop(0)
 
-            if self.baseline_sample is None and len(self.buffer) >= 5:
-                init_df = pd.DataFrame(self.buffer[:5])
-                self.baseline_sample = init_df[
-                    ["Temperature", "VCCINT", "VCCAUX", "VCCBRAM", "RO_Frequency", "RO_Delay_ns", "Error_Rate"]
-                ].mean().to_dict()
-        return packet
+                if self.baseline_sample is None and len(self.buffer) >= 5:
+                    init_df = pd.DataFrame(self.buffer[:5])
+                    self.baseline_sample = init_df[
+                        ["Temperature", "VCCINT", "VCCAUX", "VCCBRAM", "RO_Frequency", "RO_Delay_ns", "Error_Rate"]
+                    ].mean().to_dict()
+        return last_packet
 
     def get_data(self, window_size: int = 150, sample_idx: Optional[int] = None) -> Tuple[pd.DataFrame, pd.Series, Dict[str, Any]]:
         if not self.buffer:
@@ -288,14 +292,15 @@ class LiveUARTDataSource:
 
         diagnostics = self.receiver.get_diagnostics()
 
+        has_real_data = (len(self.buffer) > 0 and self.receiver.is_streaming)
         prov_map = {
-            "Temperature": "MEASURED",
-            "VCCINT": "MEASURED",
-            "VCCAUX": "MEASURED",
-            "VCCBRAM": "MEASURED",
-            "RO_Frequency": "MEASURED",
-            "RO_Delay_ns": "DERIVED",
-            "Error_Rate": "MEASURED"
+            "Temperature": "MEASURED" if has_real_data else "UNAVAILABLE",
+            "VCCINT": "MEASURED" if has_real_data else "UNAVAILABLE",
+            "VCCAUX": "MEASURED" if has_real_data else "UNAVAILABLE",
+            "VCCBRAM": "MEASURED" if has_real_data else "UNAVAILABLE",
+            "RO_Frequency": "MEASURED" if has_real_data else "UNAVAILABLE",
+            "RO_Delay_ns": "DERIVED" if has_real_data else "UNAVAILABLE",
+            "Error_Rate": "MEASURED" if has_real_data else "UNAVAILABLE"
         }
 
         eng_assessment = evaluate_engineering_limits(latest_sample.to_dict(), provenance_map=prov_map)
@@ -303,8 +308,12 @@ class LiveUARTDataSource:
         metadata = {
             "source_type": "LIVE_UART",
             "source_label": f"LIVE UART ({self.receiver.port})",
+            "has_real_data": has_real_data,
+            "is_streaming": self.receiver.is_streaming,
+            "is_port_open": self.receiver.is_port_open,
             "is_connected": self.receiver.is_connected,
             "state": self.receiver.state.value,
+            "last_error_msg": self.receiver.last_error_msg,
             "packet_count": self.receiver.packet_count,
             "error_count": self.receiver.error_count,
             "packet_rate_hz": self.receiver.get_packet_rate_hz(),

@@ -106,14 +106,22 @@ def load_ml_pipeline():
 # =============================================================================
 # Session State Initialization
 # =============================================================================
+detected_fpga_port = FPGAUARTReceiver.detect_fpga_port()
+
 if "data_mode" not in st.session_state:
-    st.session_state.data_mode = "Mock Dataset (CSV Replay)"
+    if detected_fpga_port:
+        st.session_state.data_mode = "Physical UART Stream (Artix-7)"
+    else:
+        st.session_state.data_mode = "Mock Dataset (CSV Replay)"
+
 if "sample_index" not in st.session_state:
     st.session_state.sample_index = 3500  # Default to an interesting transitional state
 if "auto_refresh" not in st.session_state:
-    st.session_state.auto_refresh = False
+    st.session_state.auto_refresh = bool(detected_fpga_port)
 if "refresh_rate" not in st.session_state:
-    st.session_state.refresh_rate = 2
+    st.session_state.refresh_rate = 1 if detected_fpga_port else 2
+if "auto_connect" not in st.session_state:
+    st.session_state.auto_connect = True
 if "sim_source" not in st.session_state:
     st.session_state.sim_source = LiveSimulationDataSource()
 if "mock_source" not in st.session_state:
@@ -122,7 +130,17 @@ if "mock_source" not in st.session_state:
     except Exception:
         st.session_state.mock_source = None
 if "uart_source" not in st.session_state:
-    st.session_state.uart_source = LiveUARTDataSource(port="COM3")
+    initial_port = detected_fpga_port or "COM10"
+    st.session_state.uart_source = LiveUARTDataSource(port=initial_port)
+
+# If in Physical UART mode and port is closed, attempt auto-connect to detected port
+if st.session_state.data_mode == "Physical UART Stream (Artix-7)":
+    if not st.session_state.uart_source.receiver.is_port_open and st.session_state.get("auto_connect", True):
+        target_port = detected_fpga_port or st.session_state.uart_source.receiver.port
+        if target_port and target_port not in ("NONE", "No Ports Detected"):
+            st.session_state.uart_source.receiver.port = target_port
+            st.session_state.uart_source.connect()
+
 if "estimated_source" not in st.session_state:
     st.session_state.estimated_source = EstimatedDataSource()
 if "est_temp" not in st.session_state:
@@ -201,34 +219,128 @@ with st.sidebar:
 
     elif "Physical UART" in data_mode:
         st.markdown("#### 🔌 Basys 3 Hardware Interface")
-        available_ports = FPGAUARTReceiver.list_available_ports()
+        rcv = st.session_state.uart_source.receiver
 
-        col_port, col_ref = st.columns([3, 1])
+        # Real-time connection badge
+        if rcv.is_streaming:
+            st.success(f"🟢 **STREAMING LIVE**: `{rcv.port}` (115200 8N1)\n\n⚡ Rate: {rcv.get_packet_rate_hz()} Hz | Total: {rcv.packet_count:,}")
+        elif rcv.is_port_open:
+            st.warning(f"🟡 **PORT OPEN (`{rcv.port}`) — WAITING FOR FPGA**")
+            if rcv.last_error_msg:
+                st.caption(f"ℹ️ {rcv.last_error_msg}")
+        else:
+            st.error("🔴 **DISCONNECTED**")
+            if rcv.last_error_msg:
+                st.caption(f"⚠️ {rcv.last_error_msg}")
+
+        # Port mapping and selection with descriptive labels
+        port_map = FPGAUARTReceiver.get_port_display_map()
+        display_labels = list(port_map.keys())
+
+        # Determine index of current or detected port
+        cur_device = rcv.port
+        default_idx = 0
+        for i, lbl in enumerate(display_labels):
+            if port_map[lbl] == cur_device or (detected_fpga_port and port_map[lbl] == detected_fpga_port):
+                default_idx = i
+                break
+
+        col_port, col_ref = st.columns([4, 1])
         with col_port:
-            selected_port = st.selectbox("UART COM Port", available_ports, index=0)
+            selected_label = st.selectbox("UART COM Port", display_labels, index=default_idx)
+            selected_device = port_map.get(selected_label, cur_device)
         with col_ref:
             st.write("") # spacing
-            if st.button("🔄", help="Refresh available serial ports"):
+            if st.button("🔄", help="Rescan serial ports"):
                 st.rerun()
 
-        st.session_state.uart_source.receiver.port = selected_port
-        st.caption(f"**Baud Rate**: 115200 8N1 | **Target**: {DEVICE_NAME}")
+        # Handle port switching cleanly
+        if selected_device != rcv.port and selected_device != "NONE":
+            if rcv.is_port_open:
+                rcv.disconnect()
+            rcv.port = selected_device
+            st.session_state.uart_source.buffer.clear()
+            if st.session_state.get("auto_connect", True):
+                st.session_state.uart_source.connect()
+            st.rerun()
+
+        st.caption(f"**Target Device**: {DEVICE_NAME} (`{selected_device}`)")
+
+        # Auto-connect toggle
+        st.session_state.auto_connect = st.checkbox(
+            "Auto-Connect when FPGA detected",
+            value=st.session_state.get("auto_connect", True),
+            help="Automatically attempts to connect to the detected Basys 3 USB port."
+        )
 
         col_u1, col_u2 = st.columns(2)
         with col_u1:
-            if st.button("🔌 Connect", width="stretch"):
-                success = st.session_state.uart_source.connect()
-                if success:
-                    st.success(f"Connected to {selected_port}")
-                else:
-                    err_txt = st.session_state.uart_source.receiver.last_error_msg or "Port unavailable"
-                    st.warning(f"Connection failed: {err_txt}")
-                st.rerun()
+            if not rcv.is_port_open:
+                if st.button("🔌 Connect", width="stretch"):
+                    ok = st.session_state.uart_source.connect()
+                    if not ok:
+                        st.session_state.uart_connect_error = rcv.last_error_msg
+                    else:
+                        st.session_state.uart_connect_error = None
+                    st.rerun()
+            else:
+                st.button("🔌 Connected", disabled=True, width="stretch")
         with col_u2:
-            if st.button("🛑 Disconnect", width="stretch"):
-                st.session_state.uart_source.disconnect()
-                st.info("Disconnected.")
+            if rcv.is_port_open:
+                if st.button("🛑 Disconnect", width="stretch"):
+                    st.session_state.uart_source.disconnect()
+                    st.session_state.uart_connect_error = None
+                    st.rerun()
+            else:
+                st.button("🛑 Disconnected", disabled=True, width="stretch")
+
+        if st.session_state.get("uart_connect_error"):
+            st.error(f"⚠️ {st.session_state.uart_connect_error}")
+
+        with st.expander("⚡ FPGA Hardware Programmer", expanded=False):
+            st.markdown("Burn the precompiled health monitor bitstream (Ring Oscillator, XADC, PRBS-7, UART) into the board:")
+            if st.button("🔥 Burn Precompiled Bitstream", width="stretch"):
+                with st.spinner("Programming Basys 3 FPGA over JTAG..."):
+                    try:
+                        from hardware.flash_manager import program_health_bitstream
+                        ok, msg = program_health_bitstream()
+                        if ok:
+                            st.success("Bitstream burned successfully! Board is now streaming telemetry.")
+                            st.session_state.uart_source.connect()
+                        else:
+                            st.error(f"Programming failed: {msg}")
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
                 st.rerun()
+
+            if st.button("↩️ Restore Original Program", width="stretch"):
+                with st.spinner("Restoring original FPGA program..."):
+                    try:
+                        from hardware.flash_manager import restore_original_program
+                        ok, msg = restore_original_program()
+                        if ok:
+                            st.success("Original FPGA program restored.")
+                        else:
+                            st.error(f"Restoration failed: {msg}")
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
+                st.rerun()
+
+        with st.expander("🎮 Board Physical Controls", expanded=False):
+            st.markdown("""
+            **Interactive Switches (`sw[3:0]`):**
+            - `sw[1]` (Pin V16): **Ring Oscillator Run / Halt**
+              *(0 = Run @ ~250 MHz, 1 = Halt to test 0 MHz delay drift)*
+            - `sw[2]` (Pin W16): **Synthetic Fault Injection**
+              *(0 = Nominal PRBS-7, 1 = Injects bit errors to trigger Warning/Degraded)*
+            - `sw[0]` (Pin V17): **Telemetry Format**
+              *(0 = JSON Telemetry stream, 1 = Handshake burst)*
+
+            **Health LEDs (`led[15:13]`):**
+            - `led[13]` (N3): **Healthy** (Green)
+            - `led[14]` (P1): **Warning** (Yellow)
+            - `led[15]` (L1): **Degraded** (Red)
+            """)
 
     elif "Estimated" in data_mode:
         st.markdown("#### 🎯 Quick Presets")
@@ -356,6 +468,66 @@ try:
         st.session_state.uart_source.poll_hardware()
         history_df, latest, meta = st.session_state.uart_source.get_data(window_size=150)
         source_badge = f"LIVE UART ({st.session_state.uart_source.receiver.port})"
+
+        # Check if real hardware telemetry is arriving
+        if not meta.get("has_real_data", False):
+            rcv = st.session_state.uart_source.receiver
+            st.markdown("### 🔌 Basys 3 Hardware Interface Status")
+
+            if not rcv.is_port_open:
+                st.error(f"🔴 **Port Disconnected**: {rcv.last_error_msg or 'Serial port is currently closed.'}")
+                st.info("Select the Digilent Basys 3 COM port in the sidebar and click **Connect**, or plug in the board's USB cable.")
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
+                    if st.button("⚡ Connect to Detected Port", type="primary", use_container_width=True):
+                        detected = FPGAUARTReceiver.detect_fpga_port()
+                        if detected:
+                            rcv.connect(detected)
+                        else:
+                            rcv.connect()
+                        st.rerun()
+                with col_btn2:
+                    if st.button("📊 Switch to Simulation Mode", use_container_width=True):
+                        st.session_state.data_mode = "Dynamic Simulation Stream"
+                        st.rerun()
+            else:
+                st.warning(
+                    f"🟡 **Connected to `{rcv.port}`, but NO telemetry packets are arriving.**\n\n"
+                    f"- **Port:** `{rcv.port}` (115200 8N1)\n"
+                    f"- **Status:** {rcv.last_error_msg or 'Listening for JSON telemetry packets...'}\n\n"
+                    "**Troubleshooting Checklist:**\n"
+                    "1. **Wrong Port?** If you have Bluetooth or other serial devices, choose the Basys 3 port (e.g. `COM10`) in the sidebar.\n"
+                    "2. **Unprogrammed FPGA?** If you just connected the board, the volatile SRAM is empty. Click **Burn Precompiled Bitstream** below.\n"
+                    "3. **Physical Switch `sw[0]`:** Ensure `sw[0]` (rightmost switch) is DOWN for JSON sensor telemetry."
+                )
+                col_f1, col_f2, col_f3 = st.columns(3)
+                with col_f1:
+                    if st.button("🔥 Burn Precompiled Bitstream Now", type="primary", use_container_width=True):
+                        with st.spinner("Burning fpga_health_top.bit into Basys 3 FPGA over JTAG..."):
+                            try:
+                                from hardware.flash_manager import program_health_bitstream
+                                ok, msg = program_health_bitstream()
+                                if ok:
+                                    st.success("Bitstream burned successfully! Starting telemetry...")
+                                    time.sleep(1)
+                                    rcv.connect()
+                                else:
+                                    st.error(f"Programming failed: {msg}")
+                            except Exception as e:
+                                st.error(f"Error: {str(e)}")
+                        st.rerun()
+                with col_f2:
+                    if st.button("🔄 Rescan & Reconnect", use_container_width=True):
+                        detected = FPGAUARTReceiver.detect_fpga_port()
+                        if detected:
+                            rcv.connect(detected)
+                        st.rerun()
+                with col_f3:
+                    if st.button("📊 Switch to Dynamic Simulation", use_container_width=True):
+                        st.session_state.data_mode = "Dynamic Simulation Stream"
+                        st.rerun()
+
+            st.stop()
 
 except Exception as e:
     st.error(f"Sensor data stream unavailable: {str(e)}")
