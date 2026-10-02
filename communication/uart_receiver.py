@@ -38,10 +38,11 @@ except ImportError:
 class ConnectionState(str, Enum):
     DISCONNECTED = "DISCONNECTED"
     CONNECTING = "CONNECTING"
-    CONNECTED = "CONNECTED"
-    RECEIVING_TELEMETRY = "RECEIVING_TELEMETRY"
-    STALE_DATA = "STALE_DATA"
-    ERROR = "ERROR"
+    PORT_OPEN_WAITING = "PORT_OPEN_WAITING"      # Port open, listening for valid packets
+    RECEIVING_TELEMETRY = "RECEIVING_TELEMETRY"  # Actively receiving valid packets
+    NO_TELEMETRY = "NO_TELEMETRY"               # Port open, but 0 valid packets (e.g. wrong port)
+    STALE_DATA = "STALE_DATA"                   # Packets stopped
+    ERROR = "ERROR"                             # Port failed to open (access denied, etc.)
 
 
 class FPGAUARTReceiver:
@@ -50,7 +51,7 @@ class FPGAUARTReceiver:
     stale data detection, and physical bounds validation for Basys 3 telemetry.
     """
 
-    def __init__(self, port: str = "COM3", baudrate: int = 115200, timeout: float = 1.0, stale_threshold_sec: float = 3.0):
+    def __init__(self, port: str = "COM10", baudrate: int = 115200, timeout: float = 1.0, stale_threshold_sec: float = 3.0):
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
@@ -73,30 +74,109 @@ class FPGAUARTReceiver:
         self._recent_timestamps: List[float] = []
 
     @property
-    def is_connected(self) -> bool:
-        """Returns True if serial connection is open and active."""
+    def is_port_open(self) -> bool:
+        """Returns True if the OS serial port handle is open."""
+        return self.serial_conn is not None and getattr(self.serial_conn, "is_open", False)
+
+    @property
+    def is_streaming(self) -> bool:
+        """Returns True ONLY if actively receiving valid FPGA telemetry packets within the stale threshold."""
+        now = time.time()
         return (
-            self.state in (ConnectionState.CONNECTED, ConnectionState.RECEIVING_TELEMETRY, ConnectionState.STALE_DATA)
-            and self.serial_conn is not None
-            and getattr(self.serial_conn, "is_open", False)
+            self.is_port_open
+            and self.state == ConnectionState.RECEIVING_TELEMETRY
+            and self.packet_count > 0
+            and (now - self.last_packet_time) <= self.stale_threshold_sec
         )
 
-    @staticmethod
-    def list_available_ports() -> List[str]:
+    @property
+    def is_connected(self) -> bool:
+        """Returns True if serial connection is open and active (not in error or disconnected state)."""
+        return (
+            self.is_port_open
+            and self.state in (
+                ConnectionState.PORT_OPEN_WAITING,
+                ConnectionState.RECEIVING_TELEMETRY,
+                ConnectionState.NO_TELEMETRY,
+                ConnectionState.STALE_DATA
+            )
+        )
+
+    @classmethod
+    def detect_fpga_port(cls) -> Optional[str]:
         """
-        List all active serial communication ports on the host system.
-        Filters and highlights FTDI / USB-UART ports when possible.
+        Auto-detects the Digilent Basys 3 USB-UART COM port.
+        Searches device descriptions, hardware IDs, and manufacturer for FTDI FT2232 / Digilent signatures.
         """
         if not SERIAL_AVAILABLE:
-            return ["No PySerial Installed"]
+            return None
+        try:
+            for p in serial.tools.list_ports.comports():
+                desc = (p.description or "").lower()
+                hwid = (p.hwid or "").lower()
+                mfg = (p.manufacturer or "").lower()
+                # Check VID/PID integers (0x0403 = 1027, 0x6010 = 24592)
+                if (getattr(p, "vid", None) in (0x0403, 1027) and getattr(p, "pid", None) in (0x6010, 24592)):
+                    return p.device
+                # Match FTDI FT2232 / Digilent in HWID, description, or manufacturer
+                if "0403:6010" in hwid or "0403+6010" in hwid:
+                    return p.device
+                if "digilent" in desc or "digilent" in hwid or "digilent" in mfg:
+                    return p.device
+                if "ftdi" in mfg and ("serial" in desc or "usb" in desc or "com" in desc or "port" in desc):
+                    return p.device
+                if "ftdi" in desc or "ftdi" in hwid:
+                    return p.device
+        except Exception:
+            pass
+        return None
+
+    @classmethod
+    def get_port_display_map(cls) -> Dict[str, str]:
+        """
+        Returns an ordered mapping of {display_label: device_name},
+        with the detected FPGA port prominently highlighted at index 0.
+        """
+        if not SERIAL_AVAILABLE:
+            return {"No PySerial Installed": "NONE"}
 
         try:
             ports = list(serial.tools.list_ports.comports())
-            if not ports:
-                return ["No Ports Detected"]
-            return [p.device for p in ports]
         except Exception:
-            return ["No Ports Detected"]
+            ports = []
+
+        if not ports:
+            return {"No Serial Ports Detected (Plug in USB)": "NONE"}
+
+        fpga_port = cls.detect_fpga_port()
+        port_map: Dict[str, str] = {}
+
+        # 1. Add detected FPGA port first
+        for p in ports:
+            if p.device == fpga_port:
+                label = f"{p.device} -- Digilent Basys 3 (FTDI FT2232) [Auto-Detected FPGA]"
+                port_map[label] = p.device
+
+        # 2. Add all other ports with clean descriptors
+        for p in ports:
+            if p.device == fpga_port:
+                continue
+            desc = p.description or "Generic Serial Port"
+            if "bluetooth" in desc.lower():
+                label = f"{p.device} -- Bluetooth Serial Link ({desc})"
+            elif "usb" in desc.lower() or "ftdi" in (p.manufacturer or "").lower():
+                label = f"{p.device} -- USB Serial ({desc})"
+            else:
+                label = f"{p.device} -- {desc}"
+            port_map[label] = p.device
+
+        return port_map
+
+    @classmethod
+    def list_available_ports(cls) -> List[str]:
+        """List all active serial communication ports on the host system."""
+        port_map = cls.get_port_display_map()
+        return list(port_map.values())
 
     @staticmethod
     def list_detailed_ports() -> List[Dict[str, str]]:
@@ -116,17 +196,26 @@ class FPGAUARTReceiver:
         except Exception:
             return []
 
-    def connect(self) -> bool:
+    def connect(self, port: Optional[str] = None) -> bool:
         """Open serial connection to the Basys 3 FPGA UART interface."""
+        if port:
+            if self.is_port_open and port != self.port:
+                self.disconnect()
+            self.port = port
+
         if not SERIAL_AVAILABLE:
             self.state = ConnectionState.ERROR
             self.last_error_msg = "PySerial library not installed in Python environment."
             return False
 
-        if self.port in ("No Ports Detected", "No PySerial Installed"):
+        if self.port in ("No Ports Detected", "No PySerial Installed", "NONE", None):
             self.state = ConnectionState.ERROR
             self.last_error_msg = f"Invalid serial port target: {self.port}"
             return False
+
+        # If already open on the desired port, return True
+        if self.is_port_open:
+            return True
 
         try:
             self.state = ConnectionState.CONNECTING
@@ -139,17 +228,33 @@ class FPGAUARTReceiver:
                 timeout=self.timeout
             )
             if self.serial_conn.is_open:
-                self.state = ConnectionState.CONNECTED
+                self.state = ConnectionState.PORT_OPEN_WAITING
                 self.connection_start_time = time.time()
+                self.packet_count = 0
+                self.last_packet_time = 0.0
                 self.last_error_msg = ""
                 return True
             else:
                 self.state = ConnectionState.ERROR
                 self.last_error_msg = f"Could not open port {self.port}."
                 return False
+        except serial.SerialException as se:
+            self.state = ConnectionState.ERROR
+            err_str = str(se)
+            if "PermissionError" in err_str or "Access is denied" in err_str:
+                self.last_error_msg = (
+                    f"Port '{self.port}' is busy or in use by another application. "
+                    f"Please close any duplicate dashboard tabs, terminal serial monitors, or Vivado HW server sessions."
+                )
+            elif "FileNotFoundError" in err_str or "could not open port" in err_str:
+                self.last_error_msg = f"Port '{self.port}' not found. Please verify the USB cable is firmly plugged in."
+            else:
+                self.last_error_msg = f"Serial error on {self.port}: {err_str}"
+            self.serial_conn = None
+            return False
         except Exception as e:
             self.state = ConnectionState.ERROR
-            self.last_error_msg = str(e)
+            self.last_error_msg = f"Unexpected error on {self.port}: {str(e)}"
             self.serial_conn = None
             return False
 
@@ -174,11 +279,20 @@ class FPGAUARTReceiver:
         if not self.is_connected or not self.serial_conn:
             return None
 
-        # Check for stale data if connection was previously receiving
         now = time.time()
+        # Check for stale data if connection was previously receiving
         if self.last_packet_time > 0 and (now - self.last_packet_time) > self.stale_threshold_sec:
             if self.state == ConnectionState.RECEIVING_TELEMETRY:
                 self.state = ConnectionState.STALE_DATA
+
+        # Check if port has been open with 0 packets for > 2.5s (Wrong port or board unprogrammed)
+        if self.packet_count == 0 and self.connection_start_time > 0 and (now - self.connection_start_time) > 2.5:
+            if self.state == ConnectionState.PORT_OPEN_WAITING:
+                self.state = ConnectionState.NO_TELEMETRY
+                self.last_error_msg = (
+                    f"Port '{self.port}' is open, but no FPGA telemetry packets have arrived. "
+                    f"Ensure you selected the Basys 3 port, board is powered, and health bitstream is burned."
+                )
 
         try:
             in_waiting = getattr(self.serial_conn, "in_waiting", 0)
@@ -194,7 +308,8 @@ class FPGAUARTReceiver:
                     self.handshake_detected = True
                     self.handshake_message = raw_line
                     self.last_packet_time = now
-                    self.state = ConnectionState.CONNECTED
+                    self.state = ConnectionState.RECEIVING_TELEMETRY
+                    self.last_error_msg = ""
                     return {
                         "packet_type": "HANDSHAKE",
                         "message": raw_line,
@@ -237,17 +352,16 @@ class FPGAUARTReceiver:
 
     def _parse_raw_line(self, line: str) -> Optional[Dict[str, Any]]:
         """Parse raw UART line into structured sensor dictionary."""
-        # Case A: JSON Telemetry Packet
-        if line.startswith("{") or line.endswith("}"):
-            if line.startswith("{") and line.endswith("}"):
-                try:
-                    data = json.loads(line)
-                    if not isinstance(data, dict) or not data:
-                        return None
+        # Case A: JSON Telemetry Packet (extract matching { ... })
+        start_idx = line.find("{")
+        end_idx = line.rfind("}")
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            try:
+                data = json.loads(line[start_idx : end_idx + 1])
+                if isinstance(data, dict) and data:
                     return self._sanitize_packet(data)
-                except (json.JSONDecodeError, ValueError):
-                    return None
-            return None
+            except (json.JSONDecodeError, ValueError):
+                pass
 
         # Case B: Key-Value Formatted Line (e.g. TEMP:35.2,VCCINT:1.002,...)
         if ":" in line and not line.startswith("{") and not line.endswith("}"):

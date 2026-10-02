@@ -5,12 +5,16 @@
 
 set script_dir [file dirname [file normalize [info script]]]
 set proj_root  [file normalize "$script_dir/.."]
-set output_dir [file normalize "$proj_root/build"]
-
+# Switch working directory and build output to local non-OneDrive disk
+set local_work "C:/vivado_build"
+set output_dir "$local_work/build"
+file mkdir $local_work
 file mkdir $output_dir
+cd $local_work
 
 puts "======================================================================"
 puts " Starting Vivado Synthesis & Implementation for Basys 3 Health Monitor"
+puts " Working directory: [pwd]"
 puts " Output directory: $output_dir"
 puts "======================================================================"
 
@@ -23,6 +27,12 @@ read_xdc $proj_root/constraints/basys3.xdc
 # 3. Synthesis
 puts "--> Running Synthesis..."
 synth_design -top fpga_health_top -part xc7a35tcpg236-1 -flatten_hierarchy rebuilt
+
+# Allow intentional combinatorial feedback loop for the Ring Oscillator
+set_property ALLOW_COMBINATORIAL_LOOPS TRUE [get_nets -hierarchical *stage*out*]
+set_property ALLOW_COMBINATORIAL_LOOPS TRUE [get_nets -hierarchical *ro_clk*]
+catch { set_property SEVERITY {Warning} [get_drc_checks LUTLP-1] }
+
 write_checkpoint -force $output_dir/post_synth.dcp
 report_utilization -file $output_dir/post_synth_utilization.rpt
 
@@ -48,6 +58,7 @@ report_utilization -file $output_dir/utilization.rpt
 report_drc -file $output_dir/drc.rpt
 
 # 8. Write Bitstream
+catch { set_property SEVERITY {Warning} [get_drc_checks LUTLP-1] }
 set bitstream_path "$output_dir/fpga_health_top.bit"
 puts "--> Writing Bitstream to $bitstream_path..."
 write_bitstream -force $bitstream_path

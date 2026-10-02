@@ -42,3 +42,11 @@ venv.bak/
 *~
 .DS_Store
 Thumbs.db
+
+# Vivado CAD temporary files
+.Xil/
+*.jou
+*.log
+*.str
+*.backup.*
+vivado_pid*.str
