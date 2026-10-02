@@ -73,14 +73,14 @@ set_property IOSTANDARD LVCMOS33 [get_ports RsTx]
 ## =============================================================================
 # Allow the intentional combinatorial feedback loop for the Ring Oscillator
 set_property ALLOW_COMBINATORIAL_LOOPS TRUE [get_nets -hierarchical *stage*out*]
-set_property ALLOW_COMBINATORIAL_LOOPS TRUE [get_nets -hierarchical *ro_clk*]
+catch { set_property ALLOW_COMBINATORIAL_LOOPS TRUE [get_nets -hierarchical -quiet *ro*clk*] }
 
 # Prevent Vivado synthesis/implementation from flattening or removing RO cells
 set_property DONT_TOUCH true [get_cells -hierarchical *u_ring_osc*]
 
 # Clock Domain Crossing (CDC) false path from RO asynchronous domain to frequency counter
-set_false_path -from [get_cells -hierarchical *gate_ro_sync_reg*] -to [get_cells -hierarchical *ro_pulse_counter_reg*]
-set_false_path -from [get_cells -hierarchical *ro_data_ready_reg*] -to [get_cells -hierarchical *ready_ref_sync_reg*]
+catch { set_false_path -from [get_cells -hierarchical -filter {IS_SEQUENTIAL} *gate_ro_sync_reg*] -to [get_cells -hierarchical -filter {IS_SEQUENTIAL} *ro_pulse_counter_reg*] }
+catch { set_false_path -from [get_cells -hierarchical -filter {IS_SEQUENTIAL} *ro_data_ready_reg*] -to [get_cells -hierarchical -filter {IS_SEQUENTIAL} *ready_ref_sync_reg*] }
 
 ## Bitstream Configuration Options
 set_property CFGBVS VCCO [current_design]
