@@ -18,7 +18,8 @@ from dashboard.config import (
     DEVICE_NAME,
     RO_STAGES,
     evaluate_single_channel,
-    LimitSeverity
+    LimitSeverity,
+    get_error_risk_label
 )
 from dashboard.styles import get_fpga_chip_svg, render_primary_health_card, render_measurement_card
 
@@ -73,16 +74,8 @@ def render_primary_health_kpis(
     health_color = HEALTH_COLORS.get(health_pred, "#00E676")
     bg_color = STATUS_BG_COLORS.get(health_pred, "rgba(0, 230, 118, 0.12)")
 
-    # Derive error risk label
-    if health_pred == "Degraded" or error_rate > 0.002:
-        risk_label = "High"
-        risk_color = HEALTH_COLORS["Degraded"]
-    elif health_pred == "Warning" or error_rate > 0.0008:
-        risk_label = "Medium"
-        risk_color = HEALTH_COLORS["Warning"]
-    else:
-        risk_label = "Low"
-        risk_color = HEALTH_COLORS["Healthy"]
+    # Derive error risk label INDEPENDENTLY from Error_Rate
+    risk_label, risk_color, risk_desc = get_error_risk_label(error_rate)
 
     c1, c2, c3, c4 = st.columns(4)
 
@@ -127,7 +120,7 @@ def render_primary_health_kpis(
                 value=risk_label,
                 subtext=f"Rate: {error_rate:.5f}",
                 state_color=risk_color,
-                bg_color="rgba(255, 145, 0, 0.12)"
+                bg_color="rgba(255, 23, 68, 0.12)" if risk_label == "High" else ("rgba(255, 214, 0, 0.12)" if risk_label == "Medium" else "rgba(0, 230, 118, 0.12)")
             )
         )
 
@@ -151,10 +144,10 @@ def render_measurements_grid(latest: pd.Series, baseline: Dict[str, float], samp
     vccbram_base = baseline.get("VCCBRAM", 1.000)
     vccbram_delta = latest["VCCBRAM"] - vccbram_base
 
-    ro_freq_base = baseline.get("RO_Frequency", 250.0)
+    ro_freq_base = baseline.get("RO_Frequency", 436.0)
     ro_freq_delta = latest["RO_Frequency"] - ro_freq_base
 
-    ro_delay_base = baseline.get("RO_Delay_ns", 0.4000)
+    ro_delay_base = baseline.get("RO_Delay_ns", 0.2294)
     ro_delay_delta = latest["RO_Delay_ns"] - ro_delay_base
 
     with c1:
@@ -252,11 +245,11 @@ def render_ring_oscillator_section(latest: pd.Series, baseline: Dict[str, float]
     Calculates Frequency Shift (%) and Delay Shift (%), and presents the mathematical model.
     """
     curr_freq = latest["RO_Frequency"]
-    base_freq = baseline.get("RO_Frequency", 250.0)
+    base_freq = baseline.get("RO_Frequency", 436.0)
     freq_shift_pct = ((curr_freq - base_freq) / base_freq) * 100.0
 
     curr_delay = latest["RO_Delay_ns"]
-    base_delay = baseline.get("RO_Delay_ns", 0.4000)
+    base_delay = baseline.get("RO_Delay_ns", 0.2294)
     delay_shift_pct = ((curr_delay - base_delay) / base_delay) * 100.0
 
     c1, c2, c3 = st.columns(3)
@@ -317,7 +310,7 @@ def render_baseline_comparison(latest: pd.Series, baseline: Dict[str, float]):
 
     # RO Frequency
     f_curr = latest["RO_Frequency"]
-    f_base = baseline.get("RO_Frequency", 250.0)
+    f_base = baseline.get("RO_Frequency", 436.0)
     f_shift = ((f_curr - f_base) / f_base) * 100.0
     rows.append({
         "Sensor Channel": "Ring Oscillator Frequency",
@@ -329,7 +322,7 @@ def render_baseline_comparison(latest: pd.Series, baseline: Dict[str, float]):
 
     # RO Delay
     d_curr = latest["RO_Delay_ns"]
-    d_base = baseline.get("RO_Delay_ns", 0.4000)
+    d_base = baseline.get("RO_Delay_ns", 0.2294)
     d_shift = ((d_curr - d_base) / d_base) * 100.0
     rows.append({
         "Sensor Channel": "Derived RO Stage Delay",

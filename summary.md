@@ -89,11 +89,11 @@ For the $N = 5$ inverter stage architecture:
 $$\tau_{\text{ns}} = \frac{1000}{2 \cdot 5 \cdot f_{\text{MHz}}} = \frac{100}{f_{\text{MHz}}} \quad \text{[ns / stage]}$$
 
 #### Physical Benchmarks on 28nm HKMG Artix-7:
-- **Nominal Healthy State** ($f = 250.0\text{ MHz}$):
-  $$\tau_{\text{nominal}} = \frac{100}{250.0} = 0.4000\text{ ns / stage} \quad (400\text{ ps})$$
-- **Aged / Degraded State** ($f = 235.0\text{ MHz}$):
-  $$\tau_{\text{degraded}} = \frac{100}{235.0} \approx 0.4255\text{ ns / stage} \quad (425.5\text{ ps})$$
-- **Physical Feasibility Bounds**: $0.10\text{ ns} \le \tau_{\text{ns}} \le 2.50\text{ ns}$ (values outside this range trigger a critical hardware validation error).
+- **Nominal Healthy State** ($f = 436.0\text{ MHz}$):
+  $$\tau_{\text{nominal}} = \frac{100}{436.0} = 0.2294\text{ ns / stage} \quad (229.4\text{ ps})$$
+- **Aged / Degraded State** ($f = 410.0\text{ MHz}$):
+  $$\tau_{\text{degraded}} = \frac{100}{410.0} \approx 0.2439\text{ ns / stage} \quad (243.9\text{ ps})$$
+- **Physical Feasibility Bounds**: $0.05\text{ ns} \le \tau_{\text{ns}} \le 2.50\text{ ns}$ (values outside this range trigger a critical hardware validation error).
 
 ---
 
@@ -163,7 +163,7 @@ $$V_{\text{CCAUX}}(d) = 1.800 - 0.010 \cdot d + \mathcal{N}(0, 0.001^2) \quad \t
 
 $$V_{\text{CCBRAM}}(d) = 1.000 - 0.008 \cdot d + \mathcal{N}(0, 0.001^2) \quad \text{[V]}$$
 
-$$f_{\text{RO}}(d) = 250.0 - 15.0 \cdot d + \mathcal{N}(0, 0.8^2) \quad \text{[MHz]}$$
+$$f_{\text{RO}}(d) = 436.0 - 25.0 \cdot d + \mathcal{N}(0, 0.8^2) \quad \text{[MHz]}$$
 
 $$P_{\text{error}}(d) = \max\left( 0.0, \, 0.00001 + 0.003 \cdot d + \mathcal{N}(0, 0.0002^2) \right)$$
 
@@ -333,8 +333,8 @@ To preserve physical readability, disparate physical units are strictly separate
 
 | Graph / Visualization | Visual Encoding | Color Palette | Key Reference Elements | Technical Purpose |
 | :--- | :--- | :--- | :--- | :--- |
-| **1. RO Frequency Trend** | Continuous Line | `#00E5FF` (Cyan) | Blue dashed horizontal rule at baseline ($250.0\text{ MHz}$) | Tracks transistor switching speed degradation over time. |
-| **2. Derived RO Stage Delay Trend** | Continuous Line | `#D946EF` (Magenta) | Purple dashed rule at baseline ($0.4000\text{ ns}$) | Directly quantifies physical gate propagation delay increase ($\tau$). |
+| **1. RO Frequency Trend** | Continuous Line | `#00E5FF` (Cyan) | Blue dashed horizontal rule at baseline ($436.0\text{ MHz}$) | Tracks transistor switching speed degradation over time. |
+| **2. Derived RO Stage Delay Trend** | Continuous Line | `#D946EF` (Magenta) | Purple dashed rule at baseline ($0.2294\text{ ns}$) | Directly quantifies physical gate propagation delay increase ($\tau$). |
 | **3. Die Temperature Trend** | Continuous Line | `#FF5252` (Coral Red) | Green dashed rule (baseline $35\text{°C}$), Orange dashed rule (warning threshold $50\text{°C}$) | Identifies thermal accumulation and acceleration of BTI wear-out. |
 | **4. Functional Error Rate Trend** | Filled Area with Gradient | `#FFAB00` (Amber) | Linear vertical opacity gradient ($0.45 \to 0.02$) | Highlights onset of soft errors, timing violations, and memory upsets. |
 | **5. Supply Voltage Rails (3 Sub-Charts)** | Continuous Lines | `#00E676` (Core), `#38BDF8` (Aux), `#A855F7` (BRAM) | White dashed rules at nominal voltages ($1.000\text{V}$, $1.800\text{V}$, $1.000\text{V}$) | Audits IR-drop, power delivery integrity, and voltage rail droop. |
@@ -454,7 +454,7 @@ Categorical Health State: `Healthy` (0), `Warning` (1), `Degraded` (2).
    Predictive Health Management (PHM) requires explainability for engineering trust. Random Forest calculates Mean Decrease in Impurity (Gini Importance) across all 200 trees, allowing the system to identify and display exactly which sensor parameters (e.g., `RO_Frequency_mean` vs. `Temperature_change`) drove a specific health classification.
 
 4. **Invariance to Monotonic Feature Scaling**:
-   Decision trees split based on feature orderings rather than absolute metric distances. Features with vastly different physical magnitudes (e.g., `RO_Frequency` $\approx 250.0$, `VCCINT` $\approx 1.000$, `Error_Rate` $\approx 0.00001$) operate directly without requiring min-max scaling or z-score normalization at inference time, eliminating scaling artifacts and reducing pipeline complexity.
+   Decision trees split based on feature orderings rather than absolute metric distances. Features with vastly different physical magnitudes (e.g., `RO_Frequency` $\approx 436.0$, `VCCINT` $\approx 1.000$, `Error_Rate` $\approx 0.00001$) operate directly without requiring min-max scaling or z-score normalization at inference time, eliminating scaling artifacts and reducing pipeline complexity.
 
 5. **Ultra-Low Latency Edge Inference**:
    Evaluating a feature vector across 200 binary decision trees requires only simple conditional comparisons (`if feature <= threshold`), completing in under $0.5\text{ ms}$ on standard CPUs. This enables continuous real-time telemetry streaming at high sampling rates without CPU bottlenecks.

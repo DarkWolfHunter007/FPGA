@@ -144,8 +144,8 @@ class LiveSimulationDataSource:
             "VCCINT": 1.000,
             "VCCAUX": 1.800,
             "VCCBRAM": 1.000,
-            "RO_Frequency": 250.0,
-            "RO_Delay_ns": 0.4000,
+            "RO_Frequency": 436.0,
+            "RO_Delay_ns": 0.2294,
             "Error_Rate": 0.00001
         }
         self._initialize_buffer()
@@ -166,7 +166,7 @@ class LiveSimulationDataSource:
         vccint = 1.000 - 0.010 * deg + np.random.normal(0, 0.0008)
         vccaux = 1.800 - 0.010 * deg + np.random.normal(0, 0.0008)
         vccbram = 1.000 - 0.008 * deg + np.random.normal(0, 0.0008)
-        ro_freq = 250.0 - 15.0 * deg + np.random.normal(0, 0.6)
+        ro_freq = 436.0 - 25.0 * deg + np.random.normal(0, 0.6)
         ro_delay = calculate_ro_delay_ns(ro_freq, stages=RO_STAGES)
         base_err = 0.00001 + 0.003 * deg
         err_rate = max(0.0, base_err + np.random.normal(0, 0.00015))
@@ -276,8 +276,8 @@ class LiveUARTDataSource:
                 "VCCINT": 1.000,
                 "VCCAUX": 1.800,
                 "VCCBRAM": 1.000,
-                "RO_Frequency": 250.0,
-                "RO_Delay_ns": 0.4000,
+                "RO_Frequency": 436.0,
+                "RO_Delay_ns": 0.2294,
                 "Error_Rate": 0.000010
             }]
             raw_df = pd.DataFrame(dummy)
@@ -292,7 +292,7 @@ class LiveUARTDataSource:
 
         diagnostics = self.receiver.get_diagnostics()
 
-        has_real_data = (len(self.buffer) > 0 and self.receiver.is_streaming)
+        has_real_data = (len(self.buffer) > 0)
         prov_map = {
             "Temperature": "MEASURED" if has_real_data else "UNAVAILABLE",
             "VCCINT": "MEASURED" if has_real_data else "UNAVAILABLE",
@@ -329,8 +329,8 @@ class LiveUARTDataSource:
                 "VCCINT": 1.000,
                 "VCCAUX": 1.800,
                 "VCCBRAM": 1.000,
-                "RO_Frequency": 250.0,
-                "RO_Delay_ns": 0.4000,
+                "RO_Frequency": 436.0,
+                "RO_Delay_ns": 0.2294,
                 "Error_Rate": 0.000010
             }
         }
@@ -353,8 +353,8 @@ class EstimatedDataSource:
         "VCCINT": 1.000,
         "VCCAUX": 1.800,
         "VCCBRAM": 1.000,
-        "RO_Frequency": 250.0,
-        "RO_Delay_ns": 0.4000,
+        "RO_Frequency": 436.0,
+        "RO_Delay_ns": 0.2294,
         "Error_Rate": 0.00001
     }
 

@@ -16,6 +16,10 @@ ARCHITECTURE = "28nm HKMG (High-K Metal Gate)"
 # Number of inverter stages in the on-chip Ring Oscillator
 RO_STAGES = 5
 
+# Calibrated physical baseline for Digilent Basys 3 (5-stage RO @ ~229 ps/stage)
+RO_NOMINAL_MHZ = 436.0
+RO_NOMINAL_DELAY_NS = 0.2294  # 1000.0 / (2 * 5 * 436.0) = 0.2294 ns (229.4 ps)
+
 
 # ============================================================
 # Physical Ring Oscillator Delay Calculations

@@ -33,7 +33,8 @@ from dashboard.config import (
     LimitSeverity,
     evaluate_single_channel,
     evaluate_engineering_limits,
-    determine_final_health
+    determine_final_health,
+    get_error_risk_label
 )
 from dashboard.data_source import (
     EstimatedDataSource,
@@ -66,8 +67,8 @@ class TestEngineeringOperatingLimits(unittest.TestCase):
             "VCCINT": 1.000,
             "VCCAUX": 1.800,
             "VCCBRAM": 1.000,
-            "RO_Frequency": 250.0,
-            "RO_Delay_ns": 0.4000,
+            "RO_Frequency": 436.0,
+            "RO_Delay_ns": 0.2294,
             "Error_Rate": 0.00001
         }
         assessment = evaluate_engineering_limits(reading)
@@ -101,8 +102,8 @@ class TestEngineeringOperatingLimits(unittest.TestCase):
             "VCCINT": 1.000,
             "VCCAUX": 1.800,
             "VCCBRAM": 1.000,
-            "RO_Frequency": 250.0,
-            "RO_Delay_ns": 0.4000,
+            "RO_Frequency": 436.0,
+            "RO_Delay_ns": 0.2294,
             "Error_Rate": 0.00001
         }
         assessment = evaluate_engineering_limits(reading)
@@ -127,8 +128,8 @@ class TestEngineeringOperatingLimits(unittest.TestCase):
             "VCCINT": 1.000,
             "VCCAUX": 1.800,
             "VCCBRAM": 1.000,
-            "RO_Frequency": 250.0,
-            "RO_Delay_ns": 0.4000,
+            "RO_Frequency": 436.0,
+            "RO_Delay_ns": 0.2294,
             "Error_Rate": 0.00001
         }
         assessment = evaluate_engineering_limits(reading)
@@ -180,8 +181,8 @@ class TestEngineeringOperatingLimits(unittest.TestCase):
             "VCCINT": 0.200,
             "VCCAUX": 1.800,
             "VCCBRAM": 1.000,
-            "RO_Frequency": 250.0,
-            "RO_Delay_ns": 0.4000,
+            "RO_Frequency": 436.0,
+            "RO_Delay_ns": 0.2294,
             "Error_Rate": 0.00001
         }
         assessment = evaluate_engineering_limits(reading)
@@ -208,8 +209,8 @@ class TestEngineeringOperatingLimits(unittest.TestCase):
             "VCCINT": 1.300,
             "VCCAUX": 1.800,
             "VCCBRAM": 1.000,
-            "RO_Frequency": 250.0,
-            "RO_Delay_ns": 0.4000,
+            "RO_Frequency": 436.0,
+            "RO_Delay_ns": 0.2294,
             "Error_Rate": 0.00001
         }
         assessment = evaluate_engineering_limits(reading)
@@ -261,8 +262,8 @@ class TestEngineeringOperatingLimits(unittest.TestCase):
             "VCCINT": 1.000,
             "VCCAUX": 1.800,
             "VCCBRAM": 1.000,
-            "RO_Frequency": 250.0,
-            "RO_Delay_ns": 0.4000,
+            "RO_Frequency": 436.0,
+            "RO_Delay_ns": 0.2294,
             "Error_Rate": 0.003000
         }
         assessment = evaluate_engineering_limits(reading)
@@ -287,8 +288,8 @@ class TestEngineeringOperatingLimits(unittest.TestCase):
             "VCCINT": 1.000,
             "VCCAUX": 1.800,
             "VCCBRAM": 1.000,
-            "RO_Frequency": 250.0,
-            "RO_Delay_ns": 0.4000,
+            "RO_Frequency": 436.0,
+            "RO_Delay_ns": 0.2294,
             "Error_Rate": 0.00001
         }
         assessment = evaluate_engineering_limits(reading)
@@ -310,8 +311,8 @@ class TestEngineeringOperatingLimits(unittest.TestCase):
             "VCCINT": 1.000,
             "VCCAUX": 1.800,
             "VCCBRAM": 1.000,
-            "RO_Frequency": 250.0,
-            "RO_Delay_ns": 0.4000,
+            "RO_Frequency": 436.0,
+            "RO_Delay_ns": 0.2294,
             "Error_Rate": 0.00001
         }
         assessment = evaluate_engineering_limits(reading)
@@ -359,7 +360,7 @@ class TestEngineeringOperatingLimits(unittest.TestCase):
     def test_case_12_hardware_telemetry_hard_limit_override(self):
         uart_src = LiveUARTDataSource(port="COM3")
         # Ingest mock hardware packets with severe undervoltage
-        deg_json = '{"Temperature":35.0,"VCCINT":0.850,"VCCAUX":1.800,"VCCBRAM":1.000,"RO_Frequency":250.0,"Error_Rate":0.000010}'
+        deg_json = '{"Temperature":35.0,"VCCINT":0.850,"VCCAUX":1.800,"VCCBRAM":1.000,"RO_Frequency":436.0,"Error_Rate":0.000010}'
         parsed = uart_src.receiver._parse_raw_line(deg_json)
         self.assertIsNotNone(parsed)
         for _ in range(15):
@@ -414,8 +415,8 @@ class TestEngineeringOperatingLimits(unittest.TestCase):
             "vccint": 0.85,
             "vccaux": 1.80,
             "vccbram": 1.00,
-            "ro_frequency": 250.0,
-            "ro_delay": 0.4000,
+            "ro_frequency": 436.0,
+            "ro_delay": 0.2294,
             "error_rate": 0.00001,
             "ro_freq_shift_pct": 0.0,
             "ro_delay_shift_pct": 0.0,
@@ -441,6 +442,167 @@ class TestEngineeringOperatingLimits(unittest.TestCase):
             any("voltage" in str(act).lower() or "power" in str(act).lower()
                 for act in report["recommended_actions"].values())
         )
+
+    # =========================================================================
+    # Validation Cases A - E (Mandatory Architecture & Calibration Verification)
+    # =========================================================================
+
+    def test_case_a_hardware_nominal_telemetry(self):
+        """
+        Case A — Current physical Basys 3 hardware telemetry:
+        Temperature = 35.8, VCCINT = 1.000, VCCAUX = 1.791, VCCBRAM = 0.999,
+        RO_Frequency = 436.3, Error_Rate = 0.00000
+        Expected:
+          - Temperature nominal
+          - Voltage rails nominal
+          - Error Risk = Low (independent)
+          - RO classification based on validated hardware calibration (NORMAL)
+          - Overall health is Healthy (not Degraded!)
+        """
+        telemetry = {
+            "Temperature": 35.8,
+            "VCCINT": 1.000,
+            "VCCAUX": 1.791,
+            "VCCBRAM": 0.999,
+            "RO_Frequency": 436.3,
+            "RO_Delay_ns": 0.2292,
+            "Error_Rate": 0.00000
+        }
+        assessment = evaluate_engineering_limits(telemetry)
+        self.assertFalse(assessment["has_critical"])
+        self.assertFalse(assessment["has_warning"])
+        self.assertEqual(assessment["max_severity"], LimitSeverity.NORMAL)
+        
+        # Verify RO frequency is evaluated as NORMAL under 436 MHz calibration
+        ro_eval = assessment["evaluations"]["RO_Frequency"]
+        self.assertEqual(ro_eval.severity, LimitSeverity.NORMAL)
+        self.assertFalse(ro_eval.is_violation)
+
+        # Verify Error Risk is Low
+        risk_label, risk_color, _ = get_error_risk_label(telemetry["Error_Rate"])
+        self.assertEqual(risk_label, "Low")
+
+        # Verify ML classification on this physical point
+        if self.model is not None:
+            df = pd.DataFrame([telemetry] * 25)
+            from ml.feature_engineering import create_features
+            df_feat = create_features(df)
+            ml_pred = self.model.predict(df_feat[self.features].iloc[[-1]])[0]
+            self.assertEqual(ml_pred, "Healthy")
+
+        # Final health decision must be Healthy with NO override applied
+        final_res = determine_final_health("Healthy", 0.97, assessment)
+        self.assertFalse(final_res["override_applied"])
+        self.assertEqual(final_res["final_health"], "Healthy")
+
+    def test_case_b_elevated_temperature(self):
+        """
+        Case B — Elevated temperature independently causes Warning / Degraded,
+        while Error Risk remains Low.
+        """
+        # Warning condition: 48.0°C
+        warn_telemetry = {
+            "Temperature": 48.0,
+            "VCCINT": 1.000,
+            "VCCAUX": 1.800,
+            "VCCBRAM": 1.000,
+            "RO_Frequency": 436.0,
+            "RO_Delay_ns": 0.2294,
+            "Error_Rate": 0.00000
+        }
+        warn_assessment = evaluate_engineering_limits(warn_telemetry)
+        self.assertTrue(warn_assessment["has_warning"])
+        self.assertFalse(warn_assessment["has_critical"])
+        warn_final = determine_final_health("Healthy", 0.95, warn_assessment)
+        self.assertEqual(warn_final["final_health"], "Warning")
+        self.assertTrue(warn_final["override_applied"])
+        
+        # Error risk must STILL be Low even when health is elevated to Warning
+        risk_label, _, _ = get_error_risk_label(warn_telemetry["Error_Rate"])
+        self.assertEqual(risk_label, "Low")
+
+        # Critical condition: 54.0°C
+        crit_telemetry = dict(warn_telemetry, Temperature=54.0)
+        crit_assessment = evaluate_engineering_limits(crit_telemetry)
+        self.assertTrue(crit_assessment["has_critical"])
+        crit_final = determine_final_health("Healthy", 0.95, crit_assessment)
+        self.assertEqual(crit_final["final_health"], "Degraded")
+        self.assertTrue(crit_final["override_applied"])
+
+    def test_case_c_genuine_high_error_rate(self):
+        """
+        Case C — Genuine high error rate:
+        Verify Error Risk becomes elevated/high ONLY when Error_Rate crosses actual thresholds.
+        """
+        # Nominal zero errors
+        label_0, _, _ = get_error_risk_label(0.00000)
+        self.assertEqual(label_0, "Low")
+
+        # Small noise floor error (100 ppm) -> Low
+        label_noise, _, _ = get_error_risk_label(0.000100)
+        self.assertEqual(label_noise, "Low")
+
+        # Elevated error rate (800 ppm) -> Medium
+        label_med, _, _ = get_error_risk_label(0.000800)
+        self.assertEqual(label_med, "Medium")
+
+        # Critical bit error rate (2500 ppm) -> High
+        label_high, _, _ = get_error_risk_label(0.002500)
+        self.assertEqual(label_high, "High")
+
+        # High error rate triggers Degraded in engineering assessment
+        high_err_telemetry = {
+            "Temperature": 35.8,
+            "VCCINT": 1.000,
+            "VCCAUX": 1.791,
+            "VCCBRAM": 0.999,
+            "RO_Frequency": 436.0,
+            "RO_Delay_ns": 0.2294,
+            "Error_Rate": 0.003000
+        }
+        assessment = evaluate_engineering_limits(high_err_telemetry)
+        self.assertTrue(assessment["has_critical"])
+        final_res = determine_final_health("Healthy", 0.90, assessment)
+        self.assertEqual(final_res["final_health"], "Degraded")
+
+    def test_case_d_ro_degradation(self):
+        """
+        Case D — RO timing degradation:
+        Starting from physical baseline (436 MHz), reduce RO frequency and verify
+        smooth transitions: Normal -> Warning -> Degraded.
+        """
+        # Nominal 436 MHz -> Normal
+        eval_nom = evaluate_single_channel("RO_Frequency", 436.0)
+        self.assertEqual(eval_nom.severity, LimitSeverity.NORMAL)
+
+        # Mild drift 424 MHz (< 427 MHz operating floor) -> Warning
+        eval_warn = evaluate_single_channel("RO_Frequency", 424.0)
+        self.assertEqual(eval_warn.severity, LimitSeverity.WARNING)
+        self.assertIn("degradation", eval_warn.reason.lower())
+
+        # Severe timing slowing 408 MHz (< 412 MHz critical floor) -> Critical / Degraded
+        eval_crit = evaluate_single_channel("RO_Frequency", 408.0)
+        self.assertEqual(eval_crit.severity, LimitSeverity.CRITICAL)
+        self.assertIn("critical", eval_crit.status_label.lower())
+
+    def test_case_e_simulation_and_mock_modes(self):
+        """
+        Case E — Existing mock/simulation modes:
+        Verify LiveSimulationDataSource and MockCSVDataSource operate consistently
+        with the updated physical 436.0 MHz calibration.
+        """
+        sim_source = LiveSimulationDataSource()
+        history_df, latest, meta = sim_source.get_data()
+        self.assertGreater(latest["RO_Frequency"], 400.0)
+        self.assertLess(latest["RO_Frequency"], 450.0)
+        self.assertAlmostEqual(latest["RO_Delay_ns"], round(100.0 / latest["RO_Frequency"], 4), places=3)
+        self.assertEqual(meta["baseline"]["RO_Frequency"], 436.0)
+
+        # Mock CSV DataSource
+        csv_source = MockCSVDataSource()
+        csv_history, csv_latest, csv_meta = csv_source.get_data()
+        self.assertGreater(csv_latest["RO_Frequency"], 400.0)
+        self.assertEqual(csv_meta["source_type"], "MOCK")
 
 
 if __name__ == "__main__":

@@ -125,7 +125,7 @@ In the left sidebar under **Select Telemetry Source**, select from four operatin
 
 ### 🔍 Estimated Health Assessment Methodology
 - **Provenance Tracking**: Distinguishes **User-Provided** values, **Physically Derived** metrics ($\tau = 100 / f_{\text{MHz}}$), and **Assumed Nominal Baselines**.
-- **Missing Value Handling**: Unsupplied channels default to verified Artix-7 nominal baselines ($T = 35.0^\circ\text{C}$, $\text{VCCINT} = 1.0\text{V}$, $\text{VCCAUX} = 1.8\text{V}$, $\text{VCCBRAM} = 1.0\text{V}$, $f_{\text{RO}} = 250.0\text{MHz}$, $\text{Error} = 0.00001$).
+- **Missing Value Handling**: Unsupplied channels default to verified Artix-7 nominal baselines ($T = 35.0^\circ\text{C}$, $\text{VCCINT} = 1.0\text{V}$, $\text{VCCAUX} = 1.8\text{V}$, $\text{VCCBRAM} = 1.0\text{V}$, $f_{\text{RO}} = 436.0\text{MHz}$, $\text{Error} = 0.00001$).
 - **Input Completeness & Reliability**: Reports input completeness ($k / 6$) and diagnostic coverage weight separately from the ML softmax classification probability.
 - **Estimated Health Stress Index**: Provides a continuous multi-domain operational risk score ($0.0$ to $1.0$) distinct from physical silicon lifetime consumption.
 
@@ -184,8 +184,8 @@ The system incorporates a **Deterministic Safety Envelope** that guarantees mach
 | **VCCINT** | V | 1.000 | $[0.000, 2.000]$ | $[0.950, 1.050]$ | $< 0.920$ or $> 1.080$ | Xilinx DS181 Recommended Operating (1.0V $\pm 5\%$) |
 | **VCCAUX** | V | 1.800 | $[0.000, 3.000]$ | $[1.710, 1.890]$ | $< 1.650$ or $> 1.950$ | Xilinx DS181 Recommended Operating (1.8V $\pm 5\%$) |
 | **VCCBRAM** | V | 1.000 | $[0.000, 2.000]$ | $[0.950, 1.050]$ | $< 0.920$ or $> 1.080$ | Xilinx DS181 Recommended Operating (1.0V $\pm 5\%$) |
-| **RO Frequency** | MHz | 250.0 | $[10.0, 500.0]$ | $[245.0, 255.0]$ | $< 238.0$ (Severe Aging) or $> 265.0$ | 28nm BTI/HCI Physical Degradation Model |
-| **Derived RO Delay** | ns | 0.4000 | $[0.100, 2.500]$ | $[0.3920, 0.4082]$ | $> 0.4202$ or $< 0.3770$ | Deterministic Physical Formula ($\tau = 100 / f$) |
+| **RO Frequency** | MHz | 436.0 | $[10.0, 800.0]$ | $[427.0, 445.0]$ | $< 412.0$ (Severe Aging) or $> 460.0$ | Basys 3 Physical Measurement & 28nm Artix-7 Model |
+| **Derived RO Delay** | ns | 0.2294 | $[0.050, 2.500]$ | $[0.2247, 0.2342]$ | $> 0.2427$ or $< 0.2174$ | Deterministic Physical Formula ($\tau = 100 / f$) |
 | **Error Rate** | — | 0.000010 | $[0.0, 1.0]$ | $[0.0, 0.000500]$ | $> 0.002000$ (Functional fault) | Hardware PRBS-7 Monitor Engineering Assumption |
 
 ### Dual Health Display & Transparency
@@ -204,9 +204,9 @@ Ring Oscillator frequency drops as logic transistors age due to BTI/HCI threshol
 
 $$\tau = \frac{1000}{2 \cdot N \cdot f_{\text{MHz}}} = \frac{100}{f_{\text{MHz}}} \quad \text{[ns / stage]} \quad (N = 5\text{ stages})$$
 
-- **$250.0\text{ MHz}$** $\implies \tau = 0.4000\text{ ns/stage}$ (Nominal baseline)
-- **$240.0\text{ MHz}$** $\implies \tau = 0.4167\text{ ns/stage}$ (Moderate drift)
-- **$235.0\text{ MHz}$** $\implies \tau = 0.4255\text{ ns/stage}$ (Degraded state)
+- **$436.0\text{ MHz}$** $\implies \tau = 0.2294\text{ ns/stage}$ ($229.4\text{ ps}$, Nominal physical baseline)
+- **$424.0\text{ MHz}$** $\implies \tau = 0.2358\text{ ns/stage}$ ($235.8\text{ ps}$, Moderate drift / Warning)
+- **$410.0\text{ MHz}$** $\implies \tau = 0.2439\text{ ns/stage}$ ($243.9\text{ ps}$, Degraded state)
 
 ---
 

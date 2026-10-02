@@ -16,7 +16,7 @@ module frequency_counter #(
     input  wire        clk,            // 100 MHz System Reference Clock
     input  wire        rst,            // System Reset
     input  wire        i_ro_clk,       // Ring Oscillator Clock Input
-    output reg  [15:0] o_freq_mhz_x10, // Frequency in 0.1 MHz units (2500 = 250.0 MHz)
+    output reg  [15:0] o_freq_mhz_x10, // Frequency in 0.1 MHz units (4360 = 436.0 MHz)
     output reg         o_freq_valid    // Pulse/flag when fresh measurement is ready
 );
 
@@ -85,7 +85,7 @@ module frequency_counter #(
         if (rst) begin
             ready_ref_sync  <= 2'b00;
             ready_ref_d1    <= 1'b0;
-            o_freq_mhz_x10  <= 16'd2500; // Default nominal 250.0 MHz
+            o_freq_mhz_x10  <= 16'd4360; // Default nominal 436.0 MHz
             o_freq_valid    <= 1'b0;
         end else begin
             ready_ref_sync <= {ready_ref_sync[0], ro_data_ready};
