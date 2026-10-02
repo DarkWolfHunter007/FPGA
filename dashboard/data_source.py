@@ -49,6 +49,13 @@ def validate_and_clean_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, bool, List[
     if "RO_Delay_ns" not in clean_df.columns or clean_df["RO_Delay_ns"].isna().any():
         clean_df["RO_Delay_ns"] = clean_df["RO_Frequency"].apply(lambda f: calculate_ro_delay_ns(f, RO_STAGES))
 
+    # Derive regional delays if regional RO frequencies present
+    for r in ["R1", "R2", "R3", "R4"]:
+        ro_col = f"RO_{r}"
+        del_col = f"RO_{r}_Delay_ns"
+        if ro_col in clean_df.columns and (del_col not in clean_df.columns or clean_df[del_col].isna().any()):
+            clean_df[del_col] = clean_df[ro_col].apply(lambda f: calculate_ro_delay_ns(f, RO_STAGES))
+
     # Physical bounds checks (Absolute sensor limits)
     for col, cfg in SENSOR_CONFIG.items():
         if col in clean_df.columns:
@@ -85,9 +92,22 @@ class MockCSVDataSource:
             raise ValueError("Mock dataset failed validation checks.")
 
         self.raw_df = clean_df
+        # If regional RO channels not in mock data, derive them with slight spatial variance
+        if "RO_R1" not in self.raw_df.columns:
+            self.raw_df["RO_R1"] = (self.raw_df["RO_Frequency"] + 0.3).round(2)
+            self.raw_df["RO_R2"] = (self.raw_df["RO_Frequency"] - 0.2).round(2)
+            self.raw_df["RO_R3"] = (self.raw_df["RO_Frequency"] + 0.1).round(2)
+            self.raw_df["RO_R4"] = (self.raw_df["RO_Frequency"] - 0.1).round(2)
+            for r in ["R1", "R2", "R3", "R4"]:
+                self.raw_df[f"RO_{r}_Delay_ns"] = self.raw_df[f"RO_{r}"].apply(lambda f: calculate_ro_delay_ns(f, RO_STAGES))
+
         # Baseline from early healthy samples (first 50 samples average)
-        early_window = clean_df.head(50)
-        self.baseline_sample = early_window[["Temperature", "VCCINT", "VCCAUX", "VCCBRAM", "RO_Frequency", "RO_Delay_ns", "Error_Rate"]].mean()
+        early_window = self.raw_df.head(50)
+        base_cols = ["Temperature", "VCCINT", "VCCAUX", "VCCBRAM", "RO_Frequency", "RO_Delay_ns", "Error_Rate"]
+        for r in ["R1", "R2", "R3", "R4"]:
+            if f"RO_{r}" in self.raw_df.columns:
+                base_cols.extend([f"RO_{r}", f"RO_{r}_Delay_ns"])
+        self.baseline_sample = early_window[base_cols].mean()
         
         # Precompute features across full historical dataset
         self.engineered_df = create_features(self.raw_df.copy())
@@ -106,12 +126,21 @@ class MockCSVDataSource:
 
         eng_assessment = evaluate_engineering_limits(latest_sample.to_dict())
 
+        base_dict = self.baseline_sample.to_dict() if self.baseline_sample is not None else {}
+        regional_baselines = {
+            "RO_R1": float(base_dict.get("RO_R1", 436.3)),
+            "RO_R2": float(base_dict.get("RO_R2", 435.8)),
+            "RO_R3": float(base_dict.get("RO_R3", 436.1)),
+            "RO_R4": float(base_dict.get("RO_R4", 435.9)),
+        }
+
         metadata = {
             "source_type": "MOCK",
             "source_label": "MOCK CSV DATASET",
             "total_samples": total_samples,
             "current_index": sample_idx,
-            "baseline": self.baseline_sample.to_dict() if self.baseline_sample is not None else {},
+            "baseline": base_dict,
+            "regional_baselines": regional_baselines,
             "engineering_assessment": eng_assessment.to_dict(),
             "provenance": {
                 "Temperature": "MOCK_REPLAY",
@@ -120,7 +149,11 @@ class MockCSVDataSource:
                 "VCCBRAM": "MOCK_REPLAY",
                 "RO_Frequency": "MOCK_REPLAY",
                 "RO_Delay_ns": "DERIVED",
-                "Error_Rate": "MOCK_REPLAY"
+                "Error_Rate": "MOCK_REPLAY",
+                "RO_R1": "DERIVED_SPATIAL",
+                "RO_R2": "DERIVED_SPATIAL",
+                "RO_R3": "DERIVED_SPATIAL",
+                "RO_R4": "DERIVED_SPATIAL"
             }
         }
         return history_df, latest_sample, metadata
@@ -146,6 +179,14 @@ class LiveSimulationDataSource:
             "VCCBRAM": 1.000,
             "RO_Frequency": 436.0,
             "RO_Delay_ns": 0.2294,
+            "RO_R1": 436.3,
+            "RO_R1_Delay_ns": 0.2292,
+            "RO_R2": 435.8,
+            "RO_R2_Delay_ns": 0.2295,
+            "RO_R3": 436.1,
+            "RO_R3_Delay_ns": 0.2293,
+            "RO_R4": 435.9,
+            "RO_R4_Delay_ns": 0.2294,
             "Error_Rate": 0.00001
         }
         self._initialize_buffer()
@@ -168,6 +209,13 @@ class LiveSimulationDataSource:
         vccbram = 1.000 - 0.008 * deg + np.random.normal(0, 0.0008)
         ro_freq = 436.0 - 25.0 * deg + np.random.normal(0, 0.6)
         ro_delay = calculate_ro_delay_ns(ro_freq, stages=RO_STAGES)
+        
+        # Regional RO drift simulation
+        ro_r1 = ro_freq + 0.3 - 2.0 * deg + np.random.normal(0, 0.3)
+        ro_r2 = ro_freq - 0.2 - 2.5 * deg + np.random.normal(0, 0.3)
+        ro_r3 = ro_freq + 0.1 - 1.8 * deg + np.random.normal(0, 0.3)
+        ro_r4 = ro_freq - 0.1 - 3.0 * deg + np.random.normal(0, 0.3)
+
         base_err = 0.00001 + 0.003 * deg
         err_rate = max(0.0, base_err + np.random.normal(0, 0.00015))
 
@@ -179,6 +227,14 @@ class LiveSimulationDataSource:
             "VCCBRAM": round(vccbram, 4),
             "RO_Frequency": round(ro_freq, 2),
             "RO_Delay_ns": round(ro_delay, 4),
+            "RO_R1": round(ro_r1, 2),
+            "RO_R1_Delay_ns": round(calculate_ro_delay_ns(ro_r1, stages=RO_STAGES), 4),
+            "RO_R2": round(ro_r2, 2),
+            "RO_R2_Delay_ns": round(calculate_ro_delay_ns(ro_r2, stages=RO_STAGES), 4),
+            "RO_R3": round(ro_r3, 2),
+            "RO_R3_Delay_ns": round(calculate_ro_delay_ns(ro_r3, stages=RO_STAGES), 4),
+            "RO_R4": round(ro_r4, 2),
+            "RO_R4_Delay_ns": round(calculate_ro_delay_ns(ro_r4, stages=RO_STAGES), 4),
             "Error_Rate": round(err_rate, 6)
         }
 
@@ -198,12 +254,20 @@ class LiveSimulationDataSource:
 
         eng_assessment = evaluate_engineering_limits(latest_sample.to_dict())
 
+        regional_baselines = {
+            "RO_R1": float(self.baseline_sample.get("RO_R1", 436.3)),
+            "RO_R2": float(self.baseline_sample.get("RO_R2", 435.8)),
+            "RO_R3": float(self.baseline_sample.get("RO_R3", 436.1)),
+            "RO_R4": float(self.baseline_sample.get("RO_R4", 435.9)),
+        }
+
         metadata = {
             "source_type": "SIMULATION",
             "source_label": "DYNAMIC SIMULATION STREAM",
             "total_samples": len(engineered_df),
             "current_index": len(engineered_df) - 1,
             "baseline": self.baseline_sample,
+            "regional_baselines": regional_baselines,
             "engineering_assessment": eng_assessment.to_dict(),
             "provenance": {
                 "Temperature": "SIMULATION",
@@ -212,7 +276,11 @@ class LiveSimulationDataSource:
                 "VCCBRAM": "SIMULATION",
                 "RO_Frequency": "SIMULATION",
                 "RO_Delay_ns": "DERIVED",
-                "Error_Rate": "SIMULATION"
+                "Error_Rate": "SIMULATION",
+                "RO_R1": "SIMULATION",
+                "RO_R2": "SIMULATION",
+                "RO_R3": "SIMULATION",
+                "RO_R4": "SIMULATION"
             }
         }
         return history_df, latest_sample, metadata
@@ -257,15 +325,24 @@ class LiveUARTDataSource:
                     "RO_Delay_ns": float(packet["RO_Delay_ns"]),
                     "Error_Rate": float(packet["Error_Rate"])
                 }
+                for r in ["RO_R1", "RO_R2", "RO_R3", "RO_R4", "RO_R1_Delay_ns", "RO_R2_Delay_ns", "RO_R3_Delay_ns", "RO_R4_Delay_ns"]:
+                    if r in packet:
+                        meas_dict[r] = float(packet[r])
+                    elif r.startswith("RO_R") and not r.endswith("_Delay_ns"):
+                        meas_dict[r] = float(packet["RO_Frequency"])
+                        meas_dict[f"{r}_Delay_ns"] = float(packet["RO_Delay_ns"])
+
                 self.buffer.append(meas_dict)
                 if len(self.buffer) > self.buffer_size:
                     self.buffer.pop(0)
 
                 if self.baseline_sample is None and len(self.buffer) >= 5:
                     init_df = pd.DataFrame(self.buffer[:5])
-                    self.baseline_sample = init_df[
-                        ["Temperature", "VCCINT", "VCCAUX", "VCCBRAM", "RO_Frequency", "RO_Delay_ns", "Error_Rate"]
-                    ].mean().to_dict()
+                    base_cols = ["Temperature", "VCCINT", "VCCAUX", "VCCBRAM", "RO_Frequency", "RO_Delay_ns", "Error_Rate"]
+                    for r in ["RO_R1", "RO_R2", "RO_R3", "RO_R4", "RO_R1_Delay_ns", "RO_R2_Delay_ns", "RO_R3_Delay_ns", "RO_R4_Delay_ns"]:
+                        if r in init_df.columns:
+                            base_cols.append(r)
+                    self.baseline_sample = init_df[base_cols].mean().to_dict()
         return last_packet
 
     def get_data(self, window_size: int = 150, sample_idx: Optional[int] = None) -> Tuple[pd.DataFrame, pd.Series, Dict[str, Any]]:
@@ -278,6 +355,14 @@ class LiveUARTDataSource:
                 "VCCBRAM": 1.000,
                 "RO_Frequency": 436.0,
                 "RO_Delay_ns": 0.2294,
+                "RO_R1": 436.3,
+                "RO_R1_Delay_ns": 0.2292,
+                "RO_R2": 435.8,
+                "RO_R2_Delay_ns": 0.2295,
+                "RO_R3": 436.1,
+                "RO_R3_Delay_ns": 0.2293,
+                "RO_R4": 435.9,
+                "RO_R4_Delay_ns": 0.2294,
                 "Error_Rate": 0.000010
             }]
             raw_df = pd.DataFrame(dummy)
@@ -302,8 +387,18 @@ class LiveUARTDataSource:
             "RO_Delay_ns": "DERIVED" if has_real_data else "UNAVAILABLE",
             "Error_Rate": "MEASURED" if has_real_data else "UNAVAILABLE"
         }
+        for r in ["RO_R1", "RO_R2", "RO_R3", "RO_R4"]:
+            prov_map[r] = "MEASURED" if (has_real_data and r in latest_sample) else "UNAVAILABLE"
+            prov_map[f"{r}_Delay_ns"] = "DERIVED" if (has_real_data and r in latest_sample) else "UNAVAILABLE"
 
         eng_assessment = evaluate_engineering_limits(latest_sample.to_dict(), provenance_map=prov_map)
+
+        regional_baselines = {
+            "RO_R1": float((self.baseline_sample or {}).get("RO_R1", 436.3)),
+            "RO_R2": float((self.baseline_sample or {}).get("RO_R2", 435.8)),
+            "RO_R3": float((self.baseline_sample or {}).get("RO_R3", 436.1)),
+            "RO_R4": float((self.baseline_sample or {}).get("RO_R4", 435.9)),
+        }
 
         metadata = {
             "source_type": "LIVE_UART",
@@ -324,6 +419,7 @@ class LiveUARTDataSource:
             "assumed": [],
             "provenance": prov_map,
             "engineering_assessment": eng_assessment.to_dict(),
+            "regional_baselines": regional_baselines,
             "baseline": self.baseline_sample or {
                 "Temperature": 35.0,
                 "VCCINT": 1.000,
@@ -331,6 +427,14 @@ class LiveUARTDataSource:
                 "VCCBRAM": 1.000,
                 "RO_Frequency": 436.0,
                 "RO_Delay_ns": 0.2294,
+                "RO_R1": 436.3,
+                "RO_R1_Delay_ns": 0.2292,
+                "RO_R2": 435.8,
+                "RO_R2_Delay_ns": 0.2295,
+                "RO_R3": 436.1,
+                "RO_R3_Delay_ns": 0.2293,
+                "RO_R4": 435.9,
+                "RO_R4_Delay_ns": 0.2294,
                 "Error_Rate": 0.000010
             }
         }
@@ -355,6 +459,14 @@ class EstimatedDataSource:
         "VCCBRAM": 1.000,
         "RO_Frequency": 436.0,
         "RO_Delay_ns": 0.2294,
+        "RO_R1": 436.3,
+        "RO_R1_Delay_ns": 0.2292,
+        "RO_R2": 435.8,
+        "RO_R2_Delay_ns": 0.2295,
+        "RO_R3": 436.1,
+        "RO_R3_Delay_ns": 0.2293,
+        "RO_R4": 435.9,
+        "RO_R4_Delay_ns": 0.2294,
         "Error_Rate": 0.00001
     }
 
@@ -500,6 +612,12 @@ class EstimatedDataSource:
             err_rate = self.NOMINAL_BASELINE["Error_Rate"]
             assumed.append("Error_Rate")
 
+        # Regional RO derivation from RO_Frequency
+        ro_r1 = ro_freq + 0.3
+        ro_r2 = ro_freq - 0.2
+        ro_r3 = ro_freq + 0.1
+        ro_r4 = ro_freq - 0.1
+
         current_frame = {
             "Timestamp": time.time(),
             "Temperature": round(temp, 4),
@@ -508,6 +626,14 @@ class EstimatedDataSource:
             "VCCBRAM": round(vccbram, 4),
             "RO_Frequency": round(ro_freq, 4),
             "RO_Delay_ns": round(ro_delay, 4),
+            "RO_R1": round(ro_r1, 4),
+            "RO_R1_Delay_ns": round(calculate_ro_delay_ns(ro_r1, stages=RO_STAGES), 4),
+            "RO_R2": round(ro_r2, 4),
+            "RO_R2_Delay_ns": round(calculate_ro_delay_ns(ro_r2, stages=RO_STAGES), 4),
+            "RO_R3": round(ro_r3, 4),
+            "RO_R3_Delay_ns": round(calculate_ro_delay_ns(ro_r3, stages=RO_STAGES), 4),
+            "RO_R4": round(ro_r4, 4),
+            "RO_R4_Delay_ns": round(calculate_ro_delay_ns(ro_r4, stages=RO_STAGES), 4),
             "Error_Rate": round(err_rate, 6)
         }
 
@@ -533,8 +659,18 @@ class EstimatedDataSource:
             for c in ["Temperature", "VCCINT", "VCCAUX", "VCCBRAM", "RO_Frequency", "Error_Rate"]
         }
         prov_map["RO_Delay_ns"] = "DERIVED" if "RO_Frequency" in user_provided else "ASSUMED_BASELINE"
+        for r in ["RO_R1", "RO_R2", "RO_R3", "RO_R4"]:
+            prov_map[r] = "DERIVED_SPATIAL" if "RO_Frequency" in user_provided else "ASSUMED_BASELINE"
+            prov_map[f"{r}_Delay_ns"] = "DERIVED" if "RO_Frequency" in user_provided else "ASSUMED_BASELINE"
 
         eng_assessment = evaluate_engineering_limits(current_frame, provenance_map=prov_map)
+
+        regional_baselines = {
+            "RO_R1": float(self.NOMINAL_BASELINE.get("RO_R1", 436.3)),
+            "RO_R2": float(self.NOMINAL_BASELINE.get("RO_R2", 435.8)),
+            "RO_R3": float(self.NOMINAL_BASELINE.get("RO_R3", 436.1)),
+            "RO_R4": float(self.NOMINAL_BASELINE.get("RO_R4", 435.9)),
+        }
 
         metadata = {
             "source_type": "ESTIMATED",
@@ -542,6 +678,7 @@ class EstimatedDataSource:
             "total_samples": 1,
             "current_index": 0,
             "baseline": dict(self.NOMINAL_BASELINE),
+            "regional_baselines": regional_baselines,
             "completeness_count": completeness_count,
             "completeness_str": f"{completeness_count} / 6",
             "completeness_ratio": completeness_ratio,

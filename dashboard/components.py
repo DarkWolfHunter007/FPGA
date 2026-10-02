@@ -365,6 +365,7 @@ def render_engineering_override_alert(
     """
     Renders a prominent high-visibility laboratory callout when a hard physical or
     engineering operating limit overrides the Random Forest ML prediction.
+    Displays clear, physically consistent root cause without double-counting derived metrics.
     """
     override_applied = final_health_dict.get("override_applied", False)
     if not override_applied:
@@ -376,41 +377,77 @@ def render_engineering_override_alert(
     title = final_health_dict.get("override_title", "HARD ENGINEERING LIMIT OVERRIDE")
     explanation = final_health_dict.get("override_explanation", "")
 
+    primary_reason = final_health_dict.get("primary_reason", "Deterministic engineering limit violated")
+    measured_str = final_health_dict.get("measured_str", "N/A")
+    limit_str = final_health_dict.get("limit_str", "N/A")
+    derived_delay_str = final_health_dict.get("derived_delay_str")
+    final_decision_str = final_health_dict.get(
+        "final_decision",
+        f"{final_health.upper()} because the deterministic engineering limit takes precedence over the ML prediction."
+    )
+
     state_color = HEALTH_COLORS.get(final_health, "#FF1744")
+
+    delay_row_html = ""
+    if derived_delay_str:
+        delay_row_html = f"""
+        <span style="color: #94A3B8; font-weight: 600;">DERIVED DELAY:</span>
+        <span style="font-family: 'JetBrains Mono', monospace; color: #CBD5E1;">{derived_delay_str}</span>
+        """
 
     html = textwrap.dedent(f"""
     <div style="background: linear-gradient(135deg, rgba(255, 23, 68, 0.15), rgba(17, 24, 39, 0.95)); border: 2px solid {state_color}; border-radius: 10px; padding: 18px 22px; margin: 16px 0 20px 0; box-shadow: 0 4px 20px rgba(255, 23, 68, 0.2);">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
             <div style="display: flex; align-items: center; gap: 8px;">
                 <span style="font-size: 1.4rem;">⚠️</span>
                 <span style="font-family: 'JetBrains Mono', monospace; font-size: 0.95rem; font-weight: 800; color: {state_color}; text-transform: uppercase; letter-spacing: 0.5px;">
                     {title}
                 </span>
             </div>
-            <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; background: rgba(255,255,255,0.08); padding: 4px 10px; border-radius: 4px; color: #CBD5E1;">
+            <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; background: rgba(255,255,255,0.08); padding: 4px 10px; border-radius: 4px; color: #CBD5E1;">
                 PRECEDENCE: HARD PHYSICAL / OPERATING BOUNDS > ML PREDICTION
             </div>
         </div>
         
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 12px 0; background: rgba(0,0,0,0.25); padding: 12px; border-radius: 6px;">
+        <!-- ML Output vs Engineering Assessment Row -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 10px 0 14px 0; background: rgba(0,0,0,0.25); padding: 12px 14px; border-radius: 6px;">
             <div>
-                <div style="font-size: 0.75rem; color: #94A3B8; text-transform: uppercase; font-family: 'JetBrains Mono', monospace;">1. Random Forest ML Output</div>
+                <div style="font-size: 0.75rem; color: #94A3B8; text-transform: uppercase; font-family: 'JetBrains Mono', monospace;">ML PREDICTION</div>
                 <div style="font-size: 1.15rem; font-weight: 700; color: #F8FAFC; margin-top: 2px;">
-                    {ml_pred.upper()} <span style="font-size: 0.85rem; color: #00E5FF; font-weight: 600;">({ml_conf * 100:.1f}% confidence)</span>
+                    {ml_pred.upper()} <span style="font-size: 0.85rem; color: #00E5FF; font-weight: 600;">({ml_conf * 100:.1f}%)</span>
                 </div>
             </div>
             <div>
-                <div style="font-size: 0.75rem; color: #94A3B8; text-transform: uppercase; font-family: 'JetBrains Mono', monospace;">2. Final Engineering Assessment</div>
+                <div style="font-size: 0.75rem; color: #94A3B8; text-transform: uppercase; font-family: 'JetBrains Mono', monospace;">ENGINEERING ASSESSMENT</div>
                 <div style="font-size: 1.15rem; font-weight: 800; color: {state_color}; margin-top: 2px;">
                     {final_health.upper()} <span style="font-size: 0.85rem; color: #FCA5A5; font-weight: 600;">(Safety Override Applied)</span>
                 </div>
             </div>
         </div>
 
-        <div style="font-size: 0.88rem; color: #E2E8F0; line-height: 1.5; margin-top: 8px;">
-            <strong>Root Cause of Override:</strong> {explanation}
+        <!-- Structured Root Cause Panel -->
+        <div style="background: rgba(0, 0, 0, 0.4); border-left: 3px solid {state_color}; border-radius: 4px; padding: 12px 14px; margin: 10px 0;">
+            <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; color: #94A3B8; text-transform: uppercase; margin-bottom: 8px; font-weight: 700;">
+                Deterministic Safety Analysis
+            </div>
+            <div style="display: grid; grid-template-columns: 150px 1fr; gap: 6px 14px; font-size: 0.88rem; color: #E2E8F0;">
+                <span style="color: #94A3B8; font-weight: 600;">PRIMARY REASON:</span>
+                <span style="font-weight: 700; color: #FFFFFF;">{primary_reason}</span>
+
+                <span style="color: #94A3B8; font-weight: 600;">MEASURED:</span>
+                <span style="font-weight: 700; font-family: 'JetBrains Mono', monospace; color: #FF5252;">{measured_str}</span>
+
+                <span style="color: #94A3B8; font-weight: 600;">LIMIT:</span>
+                <span style="font-family: 'JetBrains Mono', monospace; color: #CBD5E1;">{limit_str}</span>
+
+                {delay_row_html}
+
+                <span style="color: #94A3B8; font-weight: 600;">FINAL DECISION:</span>
+                <span style="color: #F8FAFC; font-weight: 600;">{final_decision_str}</span>
+            </div>
         </div>
-        <div style="font-size: 0.78rem; color: #94A3B8; margin-top: 6px; font-style: italic;">
+
+        <div style="font-size: 0.78rem; color: #94A3B8; margin-top: 8px; font-style: italic;">
             *Notice: The machine-learning model predicts probability distributions based on training features. When physical or engineering operating limits are violated, deterministic engineering constraints take absolute precedence.*
         </div>
     </div>

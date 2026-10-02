@@ -68,6 +68,8 @@ from dashboard.charts import (
 )
 from dashboard.health_map import (
     calculate_aggregate_risk_score,
+    generate_four_region_data,
+    render_four_region_map_html,
     generate_risk_cells,
     render_health_risk_map_html
 )
@@ -932,10 +934,13 @@ with col_m2:
         )
 
 
-# 9. FPGA HEALTH RISK MAP
-st.html('<div class="section-header">🗺️ FPGA Health Risk Map <span class="tag">VIRTUAL LOGIC FABRIC</span></div>')
-risk_cells = generate_risk_cells(composite_risk)
-st.html(render_health_risk_map_html(risk_cells, composite_risk))
+# 9. FPGA FOUR-REGION PHYSICAL HEALTH ARCHITECTURE
+st.html('<div class="section-header">🗺️ Four-Region Physical FPGA Health Architecture <span class="tag">PHYSICAL 2×2 SILICON QUADRANTS</span></div>')
+four_regions = generate_four_region_data(
+    latest.to_dict(),
+    meta.get("regional_baselines") or meta.get("baseline", {})
+)
+st.html(render_four_region_map_html(four_regions, composite_risk))
 
 
 # 10. AI AGENT RECOMMENDATIONS (LangGraph)
@@ -953,24 +958,33 @@ st.html('<div class="section-header">📋 Latest Telemetry Records <span class="
 
 raw_display_cols = [
     "Temperature", "VCCINT", "VCCAUX", "VCCBRAM",
-    "RO_Frequency", "RO_Delay_ns", "Error_Rate"
+    "RO_Frequency", "RO_Delay_ns"
 ]
+for r in ["RO_R1", "RO_R2", "RO_R3", "RO_R4"]:
+    if r in history_df.columns:
+        raw_display_cols.append(r)
+raw_display_cols.append("Error_Rate")
 if "Predicted_Health" in history_df.columns:
     raw_display_cols.append("Predicted_Health")
 if "Confidence" in history_df.columns:
     raw_display_cols.append("Confidence")
 
+format_dict = {
+    "Temperature": "{:.2f} °C",
+    "VCCINT": "{:.4f} V",
+    "VCCAUX": "{:.4f} V",
+    "VCCBRAM": "{:.4f} V",
+    "RO_Frequency": "{:.2f} MHz",
+    "RO_Delay_ns": "{:.4f} ns",
+    "Error_Rate": "{:.6f}",
+    "Confidence": "{:.1%}"
+}
+for r in ["RO_R1", "RO_R2", "RO_R3", "RO_R4"]:
+    if r in history_df.columns:
+        format_dict[r] = "{:.2f} MHz"
+
 st.dataframe(
-    history_df[raw_display_cols].tail(15).style.format({
-        "Temperature": "{:.2f} °C",
-        "VCCINT": "{:.4f} V",
-        "VCCAUX": "{:.4f} V",
-        "VCCBRAM": "{:.4f} V",
-        "RO_Frequency": "{:.2f} MHz",
-        "RO_Delay_ns": "{:.4f} ns",
-        "Error_Rate": "{:.6f}",
-        "Confidence": "{:.1%}"
-    }),
+    history_df[raw_display_cols].tail(15).style.format(format_dict),
     width="stretch"
 )
 
