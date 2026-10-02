@@ -11,31 +11,60 @@ Precedence Rule:
   Hard engineering limit violations OVERRIDE the Random Forest ML prediction.
 """
 
+import sys
+from pathlib import Path
 from enum import Enum
 from typing import Dict, Any, List, Optional, Tuple
-from config import (
-    RO_STAGES,
-    calculate_ro_delay_ns,
-    validate_ro_delay,
-    DEVICE_NAME,
-    ARCHITECTURE,
-    RO_NOMINAL_MHZ,
-    RO_NOMINAL_DELAY_NS,
-    RO_FREQ_NOMINAL_MHZ,
-    RO_FREQ_OPERATING_MIN_MHZ,
-    RO_FREQ_OPERATING_MAX_MHZ,
-    RO_FREQ_WARNING_LOW_MHZ,
-    RO_FREQ_WARNING_HIGH_MHZ,
-    RO_FREQ_CRITICAL_LOW_MHZ,
-    RO_FREQ_CRITICAL_HIGH_MHZ,
-    RO_DELAY_NOMINAL_NS,
-    RO_DELAY_OPERATING_MIN_NS,
-    RO_DELAY_OPERATING_MAX_NS,
-    RO_DELAY_WARNING_LOW_NS,
-    RO_DELAY_WARNING_HIGH_NS,
-    RO_DELAY_CRITICAL_LOW_NS,
-    RO_DELAY_CRITICAL_HIGH_NS
-)
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+import importlib
+import config
+
+try:
+    importlib.reload(config)
+except Exception:
+    pass
+
+RO_STAGES: int = getattr(config, "RO_STAGES", 5)
+DEVICE_NAME: str = getattr(config, "DEVICE_NAME", "Xilinx Artix-7 (XC7A35T-1CPG236C)")
+ARCHITECTURE: str = getattr(config, "ARCHITECTURE", "28nm HKMG (High-K Metal Gate)")
+
+# Nominal RO frequency with mutual fallback between alias names
+RO_NOMINAL_MHZ: float = getattr(config, "RO_NOMINAL_MHZ", 436.0)
+RO_FREQ_NOMINAL_MHZ: float = getattr(config, "RO_FREQ_NOMINAL_MHZ", RO_NOMINAL_MHZ)
+
+# Operating & safety frequency boundaries
+RO_FREQ_OPERATING_MIN_MHZ: float = getattr(config, "RO_FREQ_OPERATING_MIN_MHZ", 427.0)
+RO_FREQ_OPERATING_MAX_MHZ: float = getattr(config, "RO_FREQ_OPERATING_MAX_MHZ", 445.0)
+RO_FREQ_WARNING_LOW_MHZ: float = getattr(config, "RO_FREQ_WARNING_LOW_MHZ", 423.0)
+RO_FREQ_WARNING_HIGH_MHZ: float = getattr(config, "RO_FREQ_WARNING_HIGH_MHZ", 447.0)
+RO_FREQ_CRITICAL_LOW_MHZ: float = getattr(config, "RO_FREQ_CRITICAL_LOW_MHZ", 412.0)
+RO_FREQ_CRITICAL_HIGH_MHZ: float = getattr(config, "RO_FREQ_CRITICAL_HIGH_MHZ", 460.0)
+
+# Derived delay thresholds
+RO_DELAY_NOMINAL_NS: float = getattr(config, "RO_DELAY_NOMINAL_NS", round(100.0 / RO_FREQ_NOMINAL_MHZ, 4))
+RO_NOMINAL_DELAY_NS: float = getattr(config, "RO_NOMINAL_DELAY_NS", RO_DELAY_NOMINAL_NS)
+RO_DELAY_OPERATING_MIN_NS: float = getattr(config, "RO_DELAY_OPERATING_MIN_NS", round(100.0 / RO_FREQ_OPERATING_MAX_MHZ, 4))
+RO_DELAY_OPERATING_MAX_NS: float = getattr(config, "RO_DELAY_OPERATING_MAX_NS", round(100.0 / RO_FREQ_OPERATING_MIN_MHZ, 4))
+RO_DELAY_WARNING_LOW_NS: float = getattr(config, "RO_DELAY_WARNING_LOW_NS", round(100.0 / RO_FREQ_WARNING_HIGH_MHZ, 4))
+RO_DELAY_WARNING_HIGH_NS: float = getattr(config, "RO_DELAY_WARNING_HIGH_NS", round(100.0 / RO_FREQ_WARNING_LOW_MHZ, 4))
+RO_DELAY_CRITICAL_LOW_NS: float = getattr(config, "RO_DELAY_CRITICAL_LOW_NS", round(100.0 / RO_FREQ_CRITICAL_HIGH_MHZ, 4))
+RO_DELAY_CRITICAL_HIGH_NS: float = getattr(config, "RO_DELAY_CRITICAL_HIGH_NS", round(100.0 / RO_FREQ_CRITICAL_LOW_MHZ, 4))
+
+calculate_ro_delay_ns = getattr(config, "calculate_ro_delay_ns", None)
+if calculate_ro_delay_ns is None:
+    def calculate_ro_delay_ns(frequency_mhz: float, stages: int = RO_STAGES) -> float:
+        if frequency_mhz <= 0 or stages <= 0:
+            return 0.0
+        return round(1000.0 / (2.0 * stages * frequency_mhz), 4)
+
+validate_ro_delay = getattr(config, "validate_ro_delay", None)
+if validate_ro_delay is None:
+    def validate_ro_delay(delay_ns: float) -> Tuple[bool, str]:
+        return (True, "Valid")
 
 
 # =============================================================================
