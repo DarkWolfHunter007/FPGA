@@ -20,6 +20,28 @@ RO_STAGES = 5
 RO_NOMINAL_MHZ = 436.0
 RO_NOMINAL_DELAY_NS = 0.2294  # 1000.0 / (2 * 5 * 436.0) = 0.2294 ns (229.4 ps)
 
+# ============================================================
+# Canonical Ring Oscillator Timing Thresholds (Single Source of Truth)
+# Frequency is the primary physical measurement; Delay is deterministically derived.
+# ============================================================
+RO_FREQ_NOMINAL_MHZ: float = 436.0
+RO_FREQ_OPERATING_MIN_MHZ: float = 427.0  # -2.0% healthy envelope
+RO_FREQ_OPERATING_MAX_MHZ: float = 445.0  # +2.0% healthy envelope
+RO_FREQ_WARNING_LOW_MHZ: float = 423.0    # -3.0% (Moderate timing degradation / thermal load)
+RO_FREQ_WARNING_HIGH_MHZ: float = 447.0   # +2.5%
+RO_FREQ_CRITICAL_LOW_MHZ: float = 412.0   # -5.5% (Hard engineering limit: severe NBTI / transistor aging)
+RO_FREQ_CRITICAL_HIGH_MHZ: float = 460.0  # +5.5% (Abnormal clock fault)
+
+# Derived Delay Thresholds: tau = 1000.0 / (2 * N * f_MHz) = 100.0 / f_MHz for N=5 stages
+# Inverses: Higher frequency = Lower delay; Lower frequency = Higher delay
+RO_DELAY_NOMINAL_NS: float = round(100.0 / RO_FREQ_NOMINAL_MHZ, 4)             # 0.2294 ns
+RO_DELAY_OPERATING_MIN_NS: float = round(100.0 / RO_FREQ_OPERATING_MAX_MHZ, 4)   # 0.2247 ns
+RO_DELAY_OPERATING_MAX_NS: float = round(100.0 / RO_FREQ_OPERATING_MIN_MHZ, 4)   # 0.2342 ns
+RO_DELAY_WARNING_LOW_NS: float = round(100.0 / RO_FREQ_WARNING_HIGH_MHZ, 4)     # 0.2237 ns
+RO_DELAY_WARNING_HIGH_NS: float = round(100.0 / RO_FREQ_WARNING_LOW_MHZ, 4)    # 0.2364 ns
+RO_DELAY_CRITICAL_LOW_NS: float = round(100.0 / RO_FREQ_CRITICAL_HIGH_MHZ, 4)   # 0.2174 ns
+RO_DELAY_CRITICAL_HIGH_NS: float = round(100.0 / RO_FREQ_CRITICAL_LOW_MHZ, 4)  # 0.2427 ns
+
 
 # ============================================================
 # Physical Ring Oscillator Delay Calculations

@@ -20,7 +20,21 @@ from config import (
     DEVICE_NAME,
     ARCHITECTURE,
     RO_NOMINAL_MHZ,
-    RO_NOMINAL_DELAY_NS
+    RO_NOMINAL_DELAY_NS,
+    RO_FREQ_NOMINAL_MHZ,
+    RO_FREQ_OPERATING_MIN_MHZ,
+    RO_FREQ_OPERATING_MAX_MHZ,
+    RO_FREQ_WARNING_LOW_MHZ,
+    RO_FREQ_WARNING_HIGH_MHZ,
+    RO_FREQ_CRITICAL_LOW_MHZ,
+    RO_FREQ_CRITICAL_HIGH_MHZ,
+    RO_DELAY_NOMINAL_NS,
+    RO_DELAY_OPERATING_MIN_NS,
+    RO_DELAY_OPERATING_MAX_NS,
+    RO_DELAY_WARNING_LOW_NS,
+    RO_DELAY_WARNING_HIGH_NS,
+    RO_DELAY_CRITICAL_LOW_NS,
+    RO_DELAY_CRITICAL_HIGH_NS
 )
 
 
@@ -147,17 +161,18 @@ SENSOR_CONFIG: Dict[str, Dict[str, Any]] = {
     "RO_Frequency": {
         "display_name": "Ring Oscillator Frequency",
         "unit": "MHz",
-        "nominal": 436.0,
-        "description": "5-stage Ring Oscillator frequency tracking logic gate propagation delay",
+        "nominal": RO_FREQ_NOMINAL_MHZ,
+        "description": "5-stage Ring Oscillator frequency tracking logic gate propagation delay (canonical timing metric)",
         "physical_min": 10.0,
         "physical_max": 800.0,
-        "operating_min": 427.0,   # Nominal healthy oscillation envelope (nominal ± 2.0%)
-        "operating_max": 445.0,
-        "warning_low": 423.0,     # Moderate timing degradation (drop > 3.0%, tau increase > 3.1%)
-        "warning_high": 447.0,    # Slight unexpected overclock / voltage variation
-        "critical_low": 412.0,    # Hard limit: severe aging / NBTI slowing (drop > 5.5%, tau degradation > 5.8%)
-        "critical_high": 460.0,   # Hard limit: abnormal over-frequency / clock fault
+        "operating_min": RO_FREQ_OPERATING_MIN_MHZ,
+        "operating_max": RO_FREQ_OPERATING_MAX_MHZ,
+        "warning_low": RO_FREQ_WARNING_LOW_MHZ,
+        "warning_high": RO_FREQ_WARNING_HIGH_MHZ,
+        "critical_low": RO_FREQ_CRITICAL_LOW_MHZ,
+        "critical_high": RO_FREQ_CRITICAL_HIGH_MHZ,
         "is_hard_override": True,
+        "is_derived": False,
         "source": "Basys 3 Physical Measurement & 28nm Artix-7 Propagation Model",
         # Backward compatibility aliases
         "warning_drop_pct": 3.0,
@@ -168,18 +183,19 @@ SENSOR_CONFIG: Dict[str, Dict[str, Any]] = {
     "RO_Delay_ns": {
         "display_name": "Derived RO Stage Delay",
         "unit": "ns",
-        "nominal": 0.2294,        # 1000.0 / (2 * 5 * 436.0) = 0.229357... -> 0.2294 ns (229.4 ps)
-        "description": "Derived logic propagation delay per inverter stage (tau = 100 / f_MHz)",
+        "nominal": RO_DELAY_NOMINAL_NS,
+        "description": "Derived logic propagation delay per inverter stage (tau = 100 / f_MHz, derived from RO frequency)",
         "physical_min": 0.05,
         "physical_max": 2.50,
-        "operating_min": 0.2247,  # Corresponds to 445.0 MHz (100 / 445.0)
-        "operating_max": 0.2342,  # Corresponds to 427.0 MHz (100 / 427.0)
-        "warning_low": 0.2237,    # Corresponds to 447.0 MHz (100 / 447.0)
-        "warning_high": 0.2364,   # Corresponds to 423.0 MHz (+3.1% delay increase)
-        "critical_low": 0.2174,   # Corresponds to 460.0 MHz
-        "critical_high": 0.2427,  # Corresponds to 412.0 MHz (+5.8% delay increase)
-        "is_hard_override": True,
-        "source": "Deterministic Physical Formula (tau = 1000 / 2*N*f for N=5 stages)",
+        "operating_min": RO_DELAY_OPERATING_MIN_NS,
+        "operating_max": RO_DELAY_OPERATING_MAX_NS,
+        "warning_low": RO_DELAY_WARNING_LOW_NS,
+        "warning_high": RO_DELAY_WARNING_HIGH_NS,
+        "critical_low": RO_DELAY_CRITICAL_LOW_NS,
+        "critical_high": RO_DELAY_CRITICAL_HIGH_NS,
+        "is_hard_override": False,  # Delay is deterministically derived from RO_Frequency; RO_Frequency is canonical hard override
+        "is_derived": True,
+        "source": "Deterministic Physical Formula (tau = 100 / f_MHz derived from RO Frequency)",
         # Backward compatibility aliases
         "warning_increase_pct": 3.0,
         "critical_increase_pct": 5.5,
@@ -249,6 +265,10 @@ REGIONAL_CONFIG: Dict[str, Dict[str, Any]] = {
         "nominal_delay_ns": 0.2292,  # 100 / 436.3
         "warning_drop_pct": 3.0,
         "critical_drop_pct": 5.5,
+        "warning_freq": 423.2,       # 436.3 * 0.970
+        "warning_delay_ns": 0.2363,  # 100 / 423.2
+        "critical_freq": 412.3,      # 436.3 * 0.945
+        "critical_delay_ns": 0.2425, # 100 / 412.3
         "description": "Monitors logic timing propagation in Northwest silicon quadrant"
     },
     "R2": {
@@ -262,6 +282,10 @@ REGIONAL_CONFIG: Dict[str, Dict[str, Any]] = {
         "nominal_delay_ns": 0.2295,  # 100 / 435.8
         "warning_drop_pct": 3.0,
         "critical_drop_pct": 5.5,
+        "warning_freq": 422.7,       # 435.8 * 0.970
+        "warning_delay_ns": 0.2366,  # 100 / 422.7
+        "critical_freq": 411.8,      # 435.8 * 0.945
+        "critical_delay_ns": 0.2428, # 100 / 411.8
         "description": "Monitors logic timing propagation in Northeast silicon quadrant"
     },
     "R3": {
@@ -275,6 +299,10 @@ REGIONAL_CONFIG: Dict[str, Dict[str, Any]] = {
         "nominal_delay_ns": 0.2293,  # 100 / 436.1
         "warning_drop_pct": 3.0,
         "critical_drop_pct": 5.5,
+        "warning_freq": 423.0,       # 436.1 * 0.970
+        "warning_delay_ns": 0.2364,  # 100 / 423.0
+        "critical_freq": 412.1,      # 436.1 * 0.945
+        "critical_delay_ns": 0.2427, # 100 / 412.1
         "description": "Monitors logic timing propagation in Southwest silicon quadrant"
     },
     "R4": {
@@ -288,6 +316,10 @@ REGIONAL_CONFIG: Dict[str, Dict[str, Any]] = {
         "nominal_delay_ns": 0.2294,  # 100 / 435.9
         "warning_drop_pct": 3.0,
         "critical_drop_pct": 5.5,
+        "warning_freq": 422.8,       # 435.9 * 0.970
+        "warning_delay_ns": 0.2365,  # 100 / 422.8
+        "critical_freq": 411.9,      # 435.9 * 0.945
+        "critical_delay_ns": 0.2428, # 100 / 411.9
         "description": "Monitors logic timing propagation in Southeast silicon quadrant"
     }
 }
@@ -565,6 +597,8 @@ def evaluate_single_channel(
             )
 
     elif channel == "RO_Frequency":
+        equiv_delay = calculate_ro_delay_ns(val_float, stages=RO_STAGES)
+        crit_delay_str = f"{100.0 / crit_low:.4f} ns" if crit_low > 0 else "N/A"
         if val_float <= crit_low:
             return ChannelEvaluation(
                 channel=channel,
@@ -577,7 +611,11 @@ def evaluate_single_channel(
                 status_label="CRITICAL (SEVERE TIMING DEGRADATION)",
                 is_violation=True,
                 is_hard_override=True,
-                reason=f"RO Frequency ({val_float:.1f} MHz) slowed past critical boundary {crit_low:.1f} MHz.",
+                reason=(
+                    f"RO_Frequency ({val_float:.1f} MHz): Critical RO timing limit violated "
+                    f"(critical limit = {crit_low:.1f} MHz); equivalent derived delay = {equiv_delay:.4f} ns "
+                    f"(critical margin = {crit_delay_str}, derived from RO frequency)."
+                ),
                 provenance=provenance
             )
         elif val_float >= crit_high:
@@ -592,10 +630,15 @@ def evaluate_single_channel(
                 status_label="CRITICAL (ABNORMAL OVER-FREQUENCY)",
                 is_violation=True,
                 is_hard_override=True,
-                reason=f"RO Frequency ({val_float:.1f} MHz) abnormally high (expected {op_str}).",
+                reason=(
+                    f"RO_Frequency ({val_float:.1f} MHz): Critical RO timing limit violated - "
+                    f"abnormally high (critical limit = {crit_high:.1f} MHz, expected {op_str}); "
+                    f"equivalent derived delay = {equiv_delay:.4f} ns (derived from RO frequency)."
+                ),
                 provenance=provenance
             )
         elif val_float < op_min or val_float > warn_high:
+            warn_limit = warn_low if val_float < op_min else warn_high
             return ChannelEvaluation(
                 channel=channel,
                 value=val_float,
@@ -607,11 +650,21 @@ def evaluate_single_channel(
                 status_label="WARNING (TIMING DELAY DRIFT)" if val_float < op_min else "WARNING (SLIGHT OVERCLOCK)",
                 is_violation=True,
                 is_hard_override=True,
-                reason=f"RO Frequency ({val_float:.1f} MHz) shows measurable timing degradation from nominal {nom:.1f} MHz." if val_float < op_min else f"RO Frequency ({val_float:.1f} MHz) is outside nominal operating range {op_str}.",
+                reason=(
+                    f"RO_Frequency ({val_float:.1f} MHz): RO timing degradation / drift warning "
+                    f"(warning limit = {warn_limit:.1f} MHz, nominal = {nom:.1f} MHz); "
+                    f"equivalent derived delay = {equiv_delay:.4f} ns (derived from RO frequency)."
+                ) if val_float < op_min else (
+                    f"RO_Frequency ({val_float:.1f} MHz): RO timing warning "
+                    f"outside nominal operating range {op_str}; "
+                    f"equivalent derived delay = {equiv_delay:.4f} ns (derived from RO frequency)."
+                ),
                 provenance=provenance
             )
 
     elif channel == "RO_Delay_ns":
+        # Note: RO_Delay_ns is deterministically derived (tau = 100 / f_MHz).
+        # RO_Frequency is the canonical hard-override timing measurement.
         if val_float >= crit_high:
             return ChannelEvaluation(
                 channel=channel,
@@ -623,8 +676,8 @@ def evaluate_single_channel(
                 severity=LimitSeverity.CRITICAL,
                 status_label="CRITICAL (PROPAGATION DELAY SLOWED)",
                 is_violation=True,
-                is_hard_override=True,
-                reason=f"Derived stage delay ({val_float:.4f} ns) exceeds critical timing margin {crit_high:.4f} ns.",
+                is_hard_override=False,
+                reason=f"Derived stage delay ({val_float:.4f} ns) exceeds critical timing margin {crit_high:.4f} ns (derived from RO frequency).",
                 provenance=provenance
             )
         elif val_float <= crit_low:
@@ -638,8 +691,8 @@ def evaluate_single_channel(
                 severity=LimitSeverity.CRITICAL,
                 status_label="CRITICAL (ABNORMAL FAST GATE DELAY)",
                 is_violation=True,
-                is_hard_override=True,
-                reason=f"Derived stage delay ({val_float:.4f} ns) abnormally fast (expected {op_str}).",
+                is_hard_override=False,
+                reason=f"Derived stage delay ({val_float:.4f} ns) abnormally fast (expected {op_str}, derived from RO frequency).",
                 provenance=provenance
             )
         elif val_float > op_max or val_float < warn_low:
@@ -653,8 +706,8 @@ def evaluate_single_channel(
                 severity=LimitSeverity.WARNING,
                 status_label="WARNING (TIMING MARGIN REDUCTION)" if val_float > op_max else "WARNING (FAST TIMING DRIFT)",
                 is_violation=True,
-                is_hard_override=True,
-                reason=f"Derived stage delay ({val_float:.4f} ns) is elevated above nominal {nom:.4f} ns." if val_float > op_max else f"Derived stage delay ({val_float:.4f} ns) is outside nominal operating range {op_str}.",
+                is_hard_override=False,
+                reason=f"Derived stage delay ({val_float:.4f} ns) is elevated above nominal {nom:.4f} ns (derived from RO frequency)." if val_float > op_max else f"Derived stage delay ({val_float:.4f} ns) is outside nominal operating range {op_str} (derived from RO frequency).",
                 provenance=provenance
             )
 
@@ -716,7 +769,15 @@ class EngineeringAssessment:
         has_hard_violations: bool,
         max_severity: LimitSeverity,
         override_reasons: List[str],
-        channel_evaluations: Dict[str, ChannelEvaluation]
+        channel_evaluations: Dict[str, ChannelEvaluation],
+        primary_reason: str = "All engineering limits satisfied",
+        primary_channel: str = "Nominal",
+        measured_str: str = "Nominal",
+        limit_str: str = "Within envelope",
+        derived_delay_str: Optional[str] = None,
+        worst_region: Optional[str] = None,
+        regional_evaluations: Optional[Dict[str, Dict[str, Any]]] = None,
+        timing_reasons: Optional[List[str]] = None
     ):
         self.is_input_valid = is_input_valid
         self.is_physically_valid = is_physically_valid
@@ -724,6 +785,14 @@ class EngineeringAssessment:
         self.max_severity = max_severity
         self.override_reasons = override_reasons
         self.channel_evaluations = channel_evaluations
+        self.primary_reason = primary_reason
+        self.primary_channel = primary_channel
+        self.measured_str = measured_str
+        self.limit_str = limit_str
+        self.derived_delay_str = derived_delay_str
+        self.worst_region = worst_region
+        self.regional_evaluations = regional_evaluations or {}
+        self.timing_reasons = timing_reasons or []
         self.has_critical = (max_severity in (LimitSeverity.CRITICAL, LimitSeverity.PHYSICALLY_INVALID))
         self.has_warning = (max_severity == LimitSeverity.WARNING)
 
@@ -739,7 +808,15 @@ class EngineeringAssessment:
             "reasons": self.override_reasons,
             "channel_evaluations": self.channel_evaluations,
             "evaluations": self.channel_evaluations,
-            "channels": {k: v.to_dict() for k, v in self.channel_evaluations.items()}
+            "channels": {k: v.to_dict() for k, v in self.channel_evaluations.items()},
+            "primary_reason": self.primary_reason,
+            "primary_channel": self.primary_channel,
+            "measured_str": self.measured_str,
+            "limit_str": self.limit_str,
+            "derived_delay_str": self.derived_delay_str,
+            "worst_region": self.worst_region,
+            "regional_evaluations": self.regional_evaluations,
+            "timing_reasons": self.timing_reasons
         }
         if item in mapping:
             return mapping[item]
@@ -762,28 +839,128 @@ class EngineeringAssessment:
             "override_reasons": self.override_reasons,
             "reasons": self.override_reasons,
             "channels": {k: v.to_dict() for k, v in self.channel_evaluations.items()},
-            "evaluations": {k: v.to_dict() for k, v in self.channel_evaluations.items()}
+            "evaluations": {k: v.to_dict() for k, v in self.channel_evaluations.items()},
+            "primary_reason": self.primary_reason,
+            "primary_channel": self.primary_channel,
+            "measured_str": self.measured_str,
+            "limit_str": self.limit_str,
+            "derived_delay_str": self.derived_delay_str,
+            "worst_region": self.worst_region,
+            "regional_evaluations": self.regional_evaluations,
+            "timing_reasons": self.timing_reasons
         }
 
 
 def evaluate_engineering_limits(
     telemetry: Dict[str, Any],
-    provenance_map: Optional[Dict[str, str]] = None
+    provenance_map: Optional[Dict[str, str]] = None,
+    regional_baselines: Optional[Dict[str, float]] = None
 ) -> EngineeringAssessment:
     """
     Evaluates a full telemetry record against all centralized engineering boundaries.
+    
+    Architectural Principles:
+      1. Deterministic engineering rules remain authoritative for physical safety.
+      2. Derived quantities (RO_Delay_ns derived from RO_Frequency) are evaluated for
+         display and observability, but NEVER counted as a second independent failure.
+      3. When four regional monitors (R1..R4) are present, each is assessed independently
+         so an anomalous quadrant is not masked by averaging.
     """
     provenance_map = provenance_map or {}
+    regional_baselines = regional_baselines or {}
     evals: Dict[str, ChannelEvaluation] = {}
     reasons: List[str] = []
+    timing_reasons: List[str] = []
     max_sev = LimitSeverity.NORMAL
     is_input_valid = True
     is_phys_valid = True
     has_hard_viol = False
 
-    channels = ["Temperature", "VCCINT", "VCCAUX", "VCCBRAM", "RO_Frequency", "RO_Delay_ns", "Error_Rate"]
+    primary_reason = "All engineering limits satisfied"
+    primary_channel = "Nominal"
+    measured_str = "Nominal"
+    limit_str = "Within envelope"
+    derived_delay_str = None
+    worst_region = None
+    regional_evals: Dict[str, Dict[str, Any]] = {}
 
-    for ch in channels:
+    # 1. Independent Regional RO Evaluation (R1, R2, R3, R4)
+    has_regional_data = any(f"RO_{r}" in telemetry for r in ["R1", "R2", "R3", "R4"])
+    worst_reg_sev = LimitSeverity.NORMAL
+    worst_reg_id = None
+    worst_reg_reason = None
+    worst_reg_meas = None
+    worst_reg_lim = None
+    worst_reg_delay = None
+
+    if has_regional_data:
+        for r_id in ["R1", "R2", "R3", "R4"]:
+            ro_k = f"RO_{r_id}"
+            if ro_k not in telemetry:
+                continue
+            r_meta = REGIONAL_CONFIG[r_id]
+            f_meas = float(telemetry[ro_k])
+            f_base = float(regional_baselines.get(ro_k, r_meta["nominal_freq"]))
+            drift_mhz = f_meas - f_base
+            drift_pct = (drift_mhz / f_base) * 100.0 if f_base > 0 else 0.0
+            tau_ns = calculate_ro_delay_ns(f_meas, stages=RO_STAGES)
+            crit_drop = r_meta.get("critical_drop_pct", 5.5)
+            warn_drop = r_meta.get("warning_drop_pct", 3.0)
+            crit_f = round(f_base * (1.0 - crit_drop / 100.0), 1)
+            warn_f = round(f_base * (1.0 - warn_drop / 100.0), 1)
+
+            reg_sev = LimitSeverity.NORMAL
+            reg_state = "Healthy"
+            reg_reason = None
+
+            if drift_pct <= -crit_drop:
+                reg_sev = LimitSeverity.CRITICAL
+                reg_state = "Degraded"
+                reg_reason = (
+                    f"Region {r_id} ({r_meta['quadrant']}): Critical RO timing limit violated: "
+                    f"measured frequency = {f_meas:.1f} MHz (critical boundary = {crit_f:.1f} MHz, {drift_pct:.2f}% drift); "
+                    f"equivalent derived delay = {tau_ns:.4f} ns (derived from RO frequency)."
+                )
+            elif drift_pct <= -warn_drop:
+                reg_sev = LimitSeverity.WARNING
+                reg_state = "Warning"
+                reg_reason = (
+                    f"Region {r_id} ({r_meta['quadrant']}): RO timing drift warning: "
+                    f"measured frequency = {f_meas:.1f} MHz (warning boundary = {warn_f:.1f} MHz, {drift_pct:.2f}% drift); "
+                    f"equivalent derived delay = {tau_ns:.4f} ns (derived from RO frequency)."
+                )
+
+            regional_evals[r_id] = {
+                "id": r_id,
+                "name": r_meta["name"],
+                "quadrant": r_meta["quadrant"],
+                "frequency": f_meas,
+                "baseline_frequency": f_base,
+                "drift_pct": drift_pct,
+                "delay_ns": tau_ns,
+                "severity": reg_sev,
+                "state": reg_state,
+                "reason": reg_reason
+            }
+
+            if reg_sev == LimitSeverity.CRITICAL and worst_reg_sev != LimitSeverity.CRITICAL:
+                worst_reg_sev = LimitSeverity.CRITICAL
+                worst_reg_id = r_id
+                worst_reg_reason = reg_reason
+                worst_reg_meas = f"{f_meas:.1f} MHz ({r_id})"
+                worst_reg_lim = f"{crit_f:.1f} MHz ({r_id} critical boundary)"
+                worst_reg_delay = f"{tau_ns:.4f} ns (derived from RO frequency)"
+            elif reg_sev == LimitSeverity.WARNING and worst_reg_sev == LimitSeverity.NORMAL:
+                worst_reg_sev = LimitSeverity.WARNING
+                worst_reg_id = r_id
+                worst_reg_reason = reg_reason
+                worst_reg_meas = f"{f_meas:.1f} MHz ({r_id})"
+                worst_reg_lim = f"{warn_f:.1f} MHz ({r_id} warning boundary)"
+                worst_reg_delay = f"{tau_ns:.4f} ns (derived from RO frequency)"
+
+    # 2. Evaluate Non-Timing Physical Sensor Channels
+    phys_channels = ["Temperature", "VCCINT", "VCCAUX", "VCCBRAM", "Error_Rate"]
+    for ch in phys_channels:
         if ch in telemetry:
             val = telemetry[ch]
             prov = provenance_map.get(ch, "MEASURED")
@@ -796,18 +973,132 @@ def evaluate_engineering_limits(
                 max_sev = LimitSeverity.PHYSICALLY_INVALID
                 if eval_res.reason:
                     reasons.append(eval_res.reason)
+                    primary_reason = f"Physical sensor validity limit breached ({eval_res.display_name})"
+                    primary_channel = ch
+                    measured_str = f"{val} {eval_res.unit}".strip()
+                    limit_str = f"[{eval_res.operating_range_str}]"
             elif eval_res.severity == LimitSeverity.CRITICAL:
                 if max_sev != LimitSeverity.PHYSICALLY_INVALID:
                     max_sev = LimitSeverity.CRITICAL
                 has_hard_viol = True
                 if eval_res.reason:
                     reasons.append(eval_res.reason)
+                    if primary_channel == "Nominal" or primary_channel == "RO_Frequency":
+                        primary_reason = f"Critical {eval_res.display_name} limit violated"
+                        primary_channel = ch
+                        measured_str = f"{val} {eval_res.unit}".strip()
+                        limit_str = f"Critical limit exceeded"
             elif eval_res.severity == LimitSeverity.WARNING:
                 if max_sev == LimitSeverity.NORMAL:
                     max_sev = LimitSeverity.WARNING
                 has_hard_viol = True
                 if eval_res.reason:
                     reasons.append(eval_res.reason)
+                    if primary_channel == "Nominal":
+                        primary_reason = f"{eval_res.display_name} operating warning"
+                        primary_channel = ch
+                        measured_str = f"{val} {eval_res.unit}".strip()
+                        limit_str = f"Outside normal range"
+
+    # 3. Evaluate Timing Channels (RO_Frequency and Derived RO_Delay_ns)
+    # Always evaluate both for display/sensor table
+    if "RO_Frequency" in telemetry:
+        evals["RO_Frequency"] = evaluate_single_channel("RO_Frequency", telemetry["RO_Frequency"], provenance=provenance_map.get("RO_Frequency", "MEASURED"))
+    if "RO_Delay_ns" in telemetry:
+        evals["RO_Delay_ns"] = evaluate_single_channel("RO_Delay_ns", telemetry["RO_Delay_ns"], provenance=provenance_map.get("RO_Delay_ns", "DERIVED"))
+
+    # 4. Integrate Timing Violation (Canonical Single Source of Truth, No Double Counting)
+    if has_regional_data and worst_reg_sev in (LimitSeverity.CRITICAL, LimitSeverity.WARNING):
+        # A regional monitor has triggered an independent timing alert
+        worst_region = worst_reg_id
+        if worst_reg_sev == LimitSeverity.CRITICAL:
+            if max_sev != LimitSeverity.PHYSICALLY_INVALID:
+                max_sev = LimitSeverity.CRITICAL
+            has_hard_viol = True
+            if worst_reg_reason:
+                reasons.append(worst_reg_reason)
+                timing_reasons.append(worst_reg_reason)
+            primary_reason = f"Critical RO timing limit violated in {REGIONAL_CONFIG[worst_reg_id]['name']} ({REGIONAL_CONFIG[worst_reg_id]['quadrant']})"
+            primary_channel = f"RO_{worst_reg_id}"
+            measured_str = worst_reg_meas
+            limit_str = worst_reg_lim
+            derived_delay_str = worst_reg_delay
+        elif worst_reg_sev == LimitSeverity.WARNING:
+            if max_sev == LimitSeverity.NORMAL:
+                max_sev = LimitSeverity.WARNING
+            has_hard_viol = True
+            if worst_reg_reason:
+                reasons.append(worst_reg_reason)
+                timing_reasons.append(worst_reg_reason)
+            if primary_channel == "Nominal":
+                primary_reason = f"RO timing drift warning in {REGIONAL_CONFIG[worst_reg_id]['name']} ({REGIONAL_CONFIG[worst_reg_id]['quadrant']})"
+                primary_channel = f"RO_{worst_reg_id}"
+                measured_str = worst_reg_meas
+                limit_str = worst_reg_lim
+                derived_delay_str = worst_reg_delay
+    elif "RO_Frequency" in telemetry:
+        # Standard global RO_Frequency evaluation (when regional data not present or healthy)
+        ro_eval = evals["RO_Frequency"]
+        val_f = float(telemetry["RO_Frequency"])
+        equiv_delay = calculate_ro_delay_ns(val_f, stages=RO_STAGES)
+        cfg_ro = SENSOR_CONFIG["RO_Frequency"]
+
+        if ro_eval.severity == LimitSeverity.CRITICAL:
+            if max_sev != LimitSeverity.PHYSICALLY_INVALID:
+                max_sev = LimitSeverity.CRITICAL
+            has_hard_viol = True
+            if ro_eval.reason:
+                reasons.append(ro_eval.reason)
+                timing_reasons.append(ro_eval.reason)
+            primary_reason = "Critical RO timing limit violated"
+            primary_channel = "RO_Frequency"
+            measured_str = f"{val_f:.1f} MHz"
+            limit_str = f"{cfg_ro['critical_low']:.1f} MHz"
+            derived_delay_str = f"{equiv_delay:.4f} ns (derived from RO frequency)"
+        elif ro_eval.severity == LimitSeverity.WARNING:
+            if max_sev == LimitSeverity.NORMAL:
+                max_sev = LimitSeverity.WARNING
+            has_hard_viol = True
+            if ro_eval.reason:
+                reasons.append(ro_eval.reason)
+                timing_reasons.append(ro_eval.reason)
+            if primary_channel == "Nominal":
+                primary_reason = "RO timing drift warning"
+                primary_channel = "RO_Frequency"
+                measured_str = f"{val_f:.1f} MHz"
+                limit_str = f"{cfg_ro['warning_low']:.1f} MHz"
+                derived_delay_str = f"{equiv_delay:.4f} ns (derived from RO frequency)"
+        # Note: RO_Delay_ns is NOT appended to reasons when RO_Frequency is present!
+    elif "RO_Delay_ns" in telemetry:
+        # Fallback only if RO_Frequency was completely missing from telemetry
+        delay_eval = evals["RO_Delay_ns"]
+        val_d = float(telemetry["RO_Delay_ns"])
+        cfg_d = SENSOR_CONFIG["RO_Delay_ns"]
+        if delay_eval.severity == LimitSeverity.CRITICAL:
+            if max_sev != LimitSeverity.PHYSICALLY_INVALID:
+                max_sev = LimitSeverity.CRITICAL
+            has_hard_viol = True
+            if delay_eval.reason:
+                reasons.append(delay_eval.reason)
+                timing_reasons.append(delay_eval.reason)
+            primary_reason = "Critical RO propagation delay exceeded"
+            primary_channel = "RO_Delay_ns"
+            measured_str = f"{val_d:.4f} ns"
+            limit_str = f"{cfg_d['critical_high']:.4f} ns"
+            derived_delay_str = f"{val_d:.4f} ns (derived from RO frequency)"
+        elif delay_eval.severity == LimitSeverity.WARNING:
+            if max_sev == LimitSeverity.NORMAL:
+                max_sev = LimitSeverity.WARNING
+            has_hard_viol = True
+            if delay_eval.reason:
+                reasons.append(delay_eval.reason)
+                timing_reasons.append(delay_eval.reason)
+            if primary_channel == "Nominal":
+                primary_reason = "RO propagation delay elevated"
+                primary_channel = "RO_Delay_ns"
+                measured_str = f"{val_d:.4f} ns"
+                limit_str = f"{cfg_d['warning_high']:.4f} ns"
+                derived_delay_str = f"{val_d:.4f} ns (derived from RO frequency)"
 
     return EngineeringAssessment(
         is_input_valid=is_input_valid,
@@ -815,7 +1106,15 @@ def evaluate_engineering_limits(
         has_hard_violations=has_hard_viol,
         max_severity=max_sev,
         override_reasons=reasons,
-        channel_evaluations=evals
+        channel_evaluations=evals,
+        primary_reason=primary_reason,
+        primary_channel=primary_channel,
+        measured_str=measured_str,
+        limit_str=limit_str,
+        derived_delay_str=derived_delay_str,
+        worst_region=worst_region,
+        regional_evaluations=regional_evals,
+        timing_reasons=timing_reasons
     )
 
 
@@ -830,7 +1129,7 @@ def determine_final_health(
 
     Precedence:
       1. Physically Invalid -> Final: 'Degraded' / Critical, Override: True
-      2. Critical Operating Breach -> Final: 'Degraded' / Critical, Override: True (if ML != Degraded)
+      2. Critical Operating Breach -> Final: 'Degraded', Override: True (if ML != Degraded)
       3. Warning Operating Breach -> Final: 'Warning' (if ML == Healthy), Override: True
       4. Normal -> Final: ML Prediction, Override: False
     """
@@ -851,12 +1150,28 @@ def determine_final_health(
                 max_sev = LimitSeverity.NORMAL
         reasons = engineering_assessment.get("override_reasons") or engineering_assessment.get("reasons", [])
         evals = engineering_assessment.get("evaluations") or engineering_assessment.get("channel_evaluations", {})
+        primary_reason = engineering_assessment.get("primary_reason", "Deterministic engineering limit violated")
+        primary_channel = engineering_assessment.get("primary_channel", "Nominal")
+        measured_str = engineering_assessment.get("measured_str", "Nominal")
+        limit_str = engineering_assessment.get("limit_str", "Nominal")
+        derived_delay_str = engineering_assessment.get("derived_delay_str")
+        worst_region = engineering_assessment.get("worst_region")
+        regional_evals = engineering_assessment.get("regional_evaluations", {})
         eng_dict = engineering_assessment
     else:
         max_sev = engineering_assessment.max_severity
         reasons = engineering_assessment.override_reasons
         evals = engineering_assessment.channel_evaluations
+        primary_reason = getattr(engineering_assessment, "primary_reason", "Deterministic engineering limit violated")
+        primary_channel = getattr(engineering_assessment, "primary_channel", "Nominal")
+        measured_str = getattr(engineering_assessment, "measured_str", "Nominal")
+        limit_str = getattr(engineering_assessment, "limit_str", "Nominal")
+        derived_delay_str = getattr(engineering_assessment, "derived_delay_str", None)
+        worst_region = getattr(engineering_assessment, "worst_region", None)
+        regional_evals = getattr(engineering_assessment, "regional_evaluations", {})
         eng_dict = engineering_assessment.to_dict()
+
+    final_decision_str = f"{ml_pred_clean.upper()} (All engineering limits satisfied)."
 
     if max_sev == LimitSeverity.PHYSICALLY_INVALID:
         final_health = "Degraded"
@@ -867,6 +1182,7 @@ def determine_final_health(
             f"The Random Forest predicted '{ml_pred_clean}' ({ml_confidence * 100:.1f}%), "
             "but physical sensor validity takes absolute precedence."
         )
+        final_decision_str = "DEGRADED because physical sensor validity limits take precedence over the ML prediction."
 
     elif max_sev == LimitSeverity.CRITICAL:
         final_health = "Degraded"
@@ -878,6 +1194,9 @@ def determine_final_health(
                 f"The Random Forest predicted '{ml_pred_clean}' ({ml_confidence * 100:.1f}%), "
                 "but engineering operating limits take precedence."
             )
+            final_decision_str = "DEGRADED because the deterministic engineering limit takes precedence over the ML prediction."
+        else:
+            final_decision_str = "DEGRADED (ML prediction confirmed by deterministic engineering limits)."
 
     elif max_sev == LimitSeverity.WARNING:
         if ml_pred_clean == "Healthy":
@@ -889,6 +1208,26 @@ def determine_final_health(
                 f"The Random Forest predicted '{ml_pred_clean}' ({ml_confidence * 100:.1f}%), "
                 "which has been elevated to Warning based on engineering constraints."
             )
+            final_decision_str = "WARNING because the deterministic operating boundary takes precedence over the ML prediction."
+        elif ml_pred_clean == "Degraded":
+            final_health = "Degraded"
+            final_decision_str = "DEGRADED based on ML probabilistic model inference."
+        else:
+            final_health = "Warning"
+            final_decision_str = "WARNING (ML prediction confirmed by engineering limits)."
+
+    assessment_panel = {
+        "ml_prediction": ml_pred_clean.upper(),
+        "ml_confidence": float(ml_confidence),
+        "ml_confidence_str": f"{ml_confidence * 100:.1f}%",
+        "eng_assessment": final_health.upper(),
+        "primary_reason": primary_reason,
+        "primary_channel": primary_channel,
+        "measured_str": measured_str,
+        "limit_str": limit_str,
+        "derived_delay_str": derived_delay_str,
+        "final_decision": final_decision_str
+    }
 
     return {
         "ml_prediction": ml_pred_clean,
@@ -901,5 +1240,14 @@ def determine_final_health(
         "override_reasons": reasons,
         "reasons": reasons,
         "evaluations": evals,
-        "engineering_assessment": eng_dict
+        "engineering_assessment": eng_dict,
+        "assessment_panel": assessment_panel,
+        "primary_reason": primary_reason,
+        "primary_channel": primary_channel,
+        "measured_str": measured_str,
+        "limit_str": limit_str,
+        "derived_delay_str": derived_delay_str,
+        "final_decision": final_decision_str,
+        "worst_region": worst_region,
+        "regional_evaluations": regional_evals
     }

@@ -605,5 +605,200 @@ class TestEngineeringOperatingLimits(unittest.TestCase):
         self.assertEqual(csv_meta["source_type"], "MOCK")
 
 
+class TestSingleSourceROTimingAndFourRegion(unittest.TestCase):
+    """
+    Explicit verification of single-source RO timing calibration, derived delay
+    non-duplication, and four-region independent health assessment.
+    """
+
+    def test_case_1_ro_comfortably_healthy(self):
+        """Case 1: RO frequency comfortably healthy (436.0 MHz) -> Healthy, 0 timing violations."""
+        telemetry = {
+            "Temperature": 35.8,
+            "VCCINT": 1.000,
+            "VCCAUX": 1.791,
+            "VCCBRAM": 0.999,
+            "RO_Frequency": 436.0,
+            "RO_Delay_ns": round(100.0 / 436.0, 4),
+            "Error_Rate": 0.00000
+        }
+        assessment = evaluate_engineering_limits(telemetry)
+        self.assertFalse(assessment["has_critical"])
+        self.assertFalse(assessment["has_warning"])
+        self.assertEqual(len(assessment["timing_reasons"]), 0)
+        self.assertEqual(len(assessment["override_reasons"]), 0)
+
+        final_res = determine_final_health("Healthy", 0.98, assessment)
+        self.assertFalse(final_res["override_applied"])
+        self.assertEqual(final_res["final_health"], "Healthy")
+
+    def test_case_2_ro_in_warning_range(self):
+        """Case 2: RO frequency in warning range (420.0 MHz) -> Warning, exactly 1 timing warning."""
+        telemetry = {
+            "Temperature": 35.0,
+            "VCCINT": 1.000,
+            "VCCAUX": 1.800,
+            "VCCBRAM": 1.000,
+            "RO_Frequency": 420.0,
+            "RO_Delay_ns": round(100.0 / 420.0, 4),
+            "Error_Rate": 0.00000
+        }
+        assessment = evaluate_engineering_limits(telemetry)
+        self.assertFalse(assessment["has_critical"])
+        self.assertTrue(assessment["has_warning"])
+        self.assertEqual(len(assessment["override_reasons"]), 1)
+        self.assertIn("RO_Frequency", assessment["override_reasons"][0])
+        # Crucial: verify RO_Delay_ns is NOT double counted in override_reasons
+        self.assertFalse(any("RO_Delay_ns" in r for r in assessment["override_reasons"]))
+
+        final_res = determine_final_health("Healthy", 0.95, assessment)
+        self.assertTrue(final_res["override_applied"])
+        self.assertEqual(final_res["final_health"], "Warning")
+
+    def test_case_3_ro_just_above_degraded_boundary(self):
+        """Case 3: RO frequency just above degraded boundary (412.5 MHz) -> Warning."""
+        telemetry = {
+            "Temperature": 35.0,
+            "VCCINT": 1.000,
+            "VCCAUX": 1.800,
+            "VCCBRAM": 1.000,
+            "RO_Frequency": 412.5,
+            "RO_Delay_ns": round(100.0 / 412.5, 4),
+            "Error_Rate": 0.00000
+        }
+        assessment = evaluate_engineering_limits(telemetry)
+        self.assertFalse(assessment["has_critical"])
+        self.assertTrue(assessment["has_warning"])
+        self.assertEqual(assessment["max_severity"], LimitSeverity.WARNING)
+
+        final_res = determine_final_health("Healthy", 0.90, assessment)
+        self.assertTrue(final_res["override_applied"])
+        self.assertEqual(final_res["final_health"], "Warning")
+
+    def test_case_4_ro_just_below_degraded_boundary(self):
+        """Case 4: RO frequency just below degraded boundary (411.1 MHz) -> Degraded, exactly 1 timing violation."""
+        telemetry = {
+            "Temperature": 35.0,
+            "VCCINT": 1.000,
+            "VCCAUX": 1.800,
+            "VCCBRAM": 1.000,
+            "RO_Frequency": 411.1,
+            "RO_Delay_ns": round(100.0 / 411.1, 4),
+            "Error_Rate": 0.00000
+        }
+        assessment = evaluate_engineering_limits(telemetry)
+        self.assertTrue(assessment["has_critical"])
+        self.assertEqual(assessment["max_severity"], LimitSeverity.CRITICAL)
+        
+        # Exactly one timing violation reported
+        self.assertEqual(len(assessment["timing_reasons"]), 1)
+        self.assertEqual(len(assessment["override_reasons"]), 1)
+        self.assertEqual(assessment["primary_channel"], "RO_Frequency")
+        self.assertEqual(assessment["measured_str"], "411.1 MHz")
+        self.assertEqual(assessment["limit_str"], "412.0 MHz")
+        self.assertIn("0.2432 ns", assessment["derived_delay_str"])
+        self.assertIn("derived from RO frequency", assessment["derived_delay_str"])
+
+        final_res = determine_final_health("Healthy", 0.90, assessment)
+        self.assertTrue(final_res["override_applied"])
+        self.assertEqual(final_res["final_health"], "Degraded")
+
+    def test_case_5_ml_warning_and_eng_degraded_precedence(self):
+        """
+        Case 5: ML predicts WARNING (49.5%), but engineering limit breached at 411.1 MHz.
+        Final health must be DEGRADED with structured assessment panel explaining precedence.
+        """
+        telemetry = {
+            "Temperature": 35.0,
+            "VCCINT": 1.000,
+            "VCCAUX": 1.800,
+            "VCCBRAM": 1.000,
+            "RO_Frequency": 411.1,
+            "RO_Delay_ns": round(100.0 / 411.1, 4),
+            "Error_Rate": 0.00000
+        }
+        assessment = evaluate_engineering_limits(telemetry)
+        final_res = determine_final_health(
+            ml_prediction="Warning",
+            ml_confidence=0.495,
+            engineering_assessment=assessment
+        )
+        self.assertTrue(final_res["override_applied"])
+        self.assertEqual(final_res["final_health"], "Degraded")
+        panel = final_res["assessment_panel"]
+        self.assertEqual(panel["ml_prediction"], "WARNING")
+        self.assertEqual(panel["ml_confidence_str"], "49.5%")
+        self.assertEqual(panel["eng_assessment"], "DEGRADED")
+        self.assertEqual(panel["measured_str"], "411.1 MHz")
+        self.assertEqual(panel["limit_str"], "412.0 MHz")
+        self.assertIn("0.2432 ns", panel["derived_delay_str"])
+        self.assertIn("deterministic engineering limit takes precedence", panel["final_decision"])
+
+    def test_case_6_mathematical_equivalence_of_boundaries(self):
+        """
+        Case 6: Exact mathematical equivalence of frequency and delay boundaries:
+        tau = 100 / f_MHz.
+        """
+        from config import (
+            RO_FREQ_NOMINAL_MHZ, RO_DELAY_NOMINAL_NS,
+            RO_FREQ_OPERATING_MIN_MHZ, RO_DELAY_OPERATING_MAX_NS,
+            RO_FREQ_WARNING_LOW_MHZ, RO_DELAY_WARNING_HIGH_NS,
+            RO_FREQ_CRITICAL_LOW_MHZ, RO_DELAY_CRITICAL_HIGH_NS,
+        )
+        self.assertAlmostEqual(RO_DELAY_NOMINAL_NS, 100.0 / RO_FREQ_NOMINAL_MHZ, places=4)
+        self.assertAlmostEqual(RO_DELAY_OPERATING_MAX_NS, 100.0 / RO_FREQ_OPERATING_MIN_MHZ, places=4)
+        self.assertAlmostEqual(RO_DELAY_WARNING_HIGH_NS, 100.0 / RO_FREQ_WARNING_LOW_MHZ, places=4)
+        self.assertAlmostEqual(RO_DELAY_CRITICAL_HIGH_NS, 100.0 / RO_FREQ_CRITICAL_LOW_MHZ, places=4)
+
+    def test_case_7_no_double_counting_in_reasons(self):
+        """
+        Case 7: Frequency and delay are never double-counted in override_reasons or reasons.
+        """
+        telemetry = {
+            "Temperature": 35.0,
+            "VCCINT": 1.000,
+            "VCCAUX": 1.800,
+            "VCCBRAM": 1.000,
+            "RO_Frequency": 405.0,  # Critical < 412 MHz
+            "RO_Delay_ns": round(100.0 / 405.0, 4),  # Critical > 0.2427 ns
+            "Error_Rate": 0.00000
+        }
+        assessment = evaluate_engineering_limits(telemetry)
+        # Should have exactly 1 override reason, not 2
+        self.assertEqual(len(assessment["override_reasons"]), 1)
+        self.assertIn("RO_Frequency", assessment["override_reasons"][0])
+        self.assertFalse(any(r.startswith("RO_Delay_ns") for r in assessment["override_reasons"]))
+
+    def test_case_8_four_region_rule_no_masking_by_average(self):
+        """
+        Case 8: Four-region rule: R1=435, R2=436, R3=410 (critical), R4=436.
+        Average frequency is 429.25 MHz (which is > 427 MHz nominal min),
+        but R3 is critical. The system must flag R3 and NOT mask it by averaging!
+        """
+        telemetry = {
+            "Temperature": 35.0,
+            "VCCINT": 1.000,
+            "VCCAUX": 1.800,
+            "VCCBRAM": 1.000,
+            "RO_Frequency": 435.0,
+            "RO_Delay_ns": round(100.0 / 435.0, 4),
+            "Error_Rate": 0.00000,
+            "RO_R1": 435.0,
+            "RO_R2": 436.0,
+            "RO_R3": 410.0,  # Severe regional degradation in Southwest quadrant
+            "RO_R4": 436.0,
+        }
+        assessment = evaluate_engineering_limits(telemetry)
+        self.assertTrue(assessment["has_critical"])
+        self.assertEqual(assessment["max_severity"], LimitSeverity.CRITICAL)
+        self.assertEqual(assessment["worst_region"], "R3")
+        self.assertTrue(any("Region R3" in r for r in assessment["override_reasons"]))
+
+        final_res = determine_final_health("Healthy", 0.99, assessment)
+        self.assertTrue(final_res["override_applied"])
+        self.assertEqual(final_res["final_health"], "Degraded")
+        self.assertIn("R3", final_res["override_reasons"][0])
+
+
 if __name__ == "__main__":
     unittest.main()
