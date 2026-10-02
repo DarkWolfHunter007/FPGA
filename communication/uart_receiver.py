@@ -607,6 +607,14 @@ class FPGAUARTReceiver:
                     data["VCCAUX"] = v_num
                 elif "VCCBRAM" in k_clean:
                     data["VCCBRAM"] = v_num
+                elif "RO_R1" in k_clean or k_clean == "R1":
+                    data["RO_R1"] = v_num
+                elif "RO_R2" in k_clean or k_clean == "R2":
+                    data["RO_R2"] = v_num
+                elif "RO_R3" in k_clean or k_clean == "R3":
+                    data["RO_R3"] = v_num
+                elif "RO_R4" in k_clean or k_clean == "R4":
+                    data["RO_R4"] = v_num
                 elif "RO" in k_clean or "FREQ" in k_clean:
                     data["RO_Frequency"] = v_num
                 elif "ERR" in k_clean:
@@ -614,7 +622,7 @@ class FPGAUARTReceiver:
                 else:
                     return None
 
-            if data and ("Temperature" in data or "RO_Frequency" in data):
+            if data and ("Temperature" in data or "RO_Frequency" in data or "RO_R1" in data):
                 return self._sanitize_packet(data)
 
         return None
@@ -622,7 +630,8 @@ class FPGAUARTReceiver:
     def _sanitize_packet(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Validates telemetry against physical sensor constraints, computes derived
-        RO stage delay (tau = 100/f), and returns cleaned measurement dictionary.
+        RO stage delay (tau = 100/f) for each of the four physical regions (R1..R4),
+        and returns cleaned measurement dictionary.
         """
         if not isinstance(data, dict) or not data:
             return None
@@ -640,8 +649,31 @@ class FPGAUARTReceiver:
             vccint = float(vccint_raw) if vccint_raw is not None else 1.000
             vccaux = float(vccaux_raw) if vccaux_raw is not None else 1.800
             vccbram = float(vccbram_raw) if vccbram_raw is not None else 1.000
-            ro_freq = float(ro_freq_raw) if ro_freq_raw is not None else 250.0
             error_rate = float(err_raw) if err_raw is not None else 0.000010
+
+            # Extract Four-Region Frequencies (R1..R4)
+            ro_r1_raw = data.get("RO_R1", data.get("ro_r1", data.get("R1")))
+            ro_r2_raw = data.get("RO_R2", data.get("ro_r2", data.get("R2")))
+            ro_r3_raw = data.get("RO_R3", data.get("ro_r3", data.get("R3")))
+            ro_r4_raw = data.get("RO_R4", data.get("ro_r4", data.get("R4")))
+
+            # Fallback handling: If R1..R4 present, calculate RO_Frequency if missing
+            if ro_r1_raw is not None and ro_r2_raw is not None:
+                ro_r1 = float(ro_r1_raw)
+                ro_r2 = float(ro_r2_raw)
+                ro_r3 = float(ro_r3_raw) if ro_r3_raw is not None else ro_r1
+                ro_r4 = float(ro_r4_raw) if ro_r4_raw is not None else ro_r2
+                if ro_freq_raw is not None:
+                    ro_freq = float(ro_freq_raw)
+                else:
+                    ro_freq = (ro_r1 + ro_r2 + ro_r3 + ro_r4) / 4.0
+            else:
+                # Legacy single-RO packet backward compatibility
+                ro_freq = float(ro_freq_raw) if ro_freq_raw is not None else 436.0
+                ro_r1 = ro_freq
+                ro_r2 = ro_freq
+                ro_r3 = ro_freq
+                ro_r4 = ro_freq
 
             # Physical Bounds Validation for Artix-7
             # Temperature: 0.0 °C to 125.0 °C (Die junction rating)
@@ -656,15 +688,20 @@ class FPGAUARTReceiver:
             # VCCBRAM: 0.50 V to 1.50 V (Nominal: 1.000V)
             if not (0.50 <= vccbram <= 1.50):
                 return None
-            # Ring Oscillator Frequency: 50.0 MHz to 500.0 MHz
-            if not (50.0 <= ro_freq <= 500.0):
-                return None
+            # Ring Oscillator Frequencies: 50.0 MHz to 500.0 MHz
+            for f in (ro_freq, ro_r1, ro_r2, ro_r3, ro_r4):
+                if not (50.0 <= f <= 500.0):
+                    return None
             # Error Rate: >= 0.0 and <= 1.0
             if not (0.0 <= error_rate <= 1.0):
                 return None
 
             # Deterministic Physical Derivation: tau = 1000 / (2 * N * f_MHz) = 100 / f_MHz
             ro_delay_ns = calculate_ro_delay_ns(ro_freq, stages=RO_STAGES)
+            ro_r1_delay_ns = calculate_ro_delay_ns(ro_r1, stages=RO_STAGES)
+            ro_r2_delay_ns = calculate_ro_delay_ns(ro_r2, stages=RO_STAGES)
+            ro_r3_delay_ns = calculate_ro_delay_ns(ro_r3, stages=RO_STAGES)
+            ro_r4_delay_ns = calculate_ro_delay_ns(ro_r4, stages=RO_STAGES)
 
             return {
                 "Timestamp": time.time(),
@@ -674,6 +711,14 @@ class FPGAUARTReceiver:
                 "VCCBRAM": round(vccbram, 4),
                 "RO_Frequency": round(ro_freq, 2),
                 "RO_Delay_ns": round(ro_delay_ns, 4),
+                "RO_R1": round(ro_r1, 2),
+                "RO_R1_Delay_ns": round(ro_r1_delay_ns, 4),
+                "RO_R2": round(ro_r2, 2),
+                "RO_R2_Delay_ns": round(ro_r2_delay_ns, 4),
+                "RO_R3": round(ro_r3, 2),
+                "RO_R3_Delay_ns": round(ro_r3_delay_ns, 4),
+                "RO_R4": round(ro_r4, 2),
+                "RO_R4_Delay_ns": round(ro_r4_delay_ns, 4),
                 "Error_Rate": round(max(0.0, float(error_rate)), 6),
                 "Provenance": {
                     "Temperature": "MEASURED",
@@ -682,6 +727,14 @@ class FPGAUARTReceiver:
                     "VCCBRAM": "MEASURED",
                     "RO_Frequency": "MEASURED",
                     "RO_Delay_ns": "DERIVED",
+                    "RO_R1": "MEASURED",
+                    "RO_R1_Delay_ns": "DERIVED",
+                    "RO_R2": "MEASURED",
+                    "RO_R2_Delay_ns": "DERIVED",
+                    "RO_R3": "MEASURED",
+                    "RO_R3_Delay_ns": "DERIVED",
+                    "RO_R4": "MEASURED",
+                    "RO_R4_Delay_ns": "DERIVED",
                     "Error_Rate": "MEASURED"
                 }
             }

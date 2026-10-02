@@ -116,12 +116,12 @@ class TestFPGAPhysicalUART(unittest.TestCase):
         self.assertIsNone(parsed)
 
     # -------------------------------------------------------------------------
-    # Test 3: JSON Telemetry Parsing
+    # Test 3: JSON Telemetry Parsing (Single and Four-Region Architecture)
     # -------------------------------------------------------------------------
     def test_valid_json_packet_parsing(self):
         sample_json = (
             '{"Temperature":36.4,"VCCINT":1.002,"VCCAUX":1.801,'
-            '"VCCBRAM":1.000,"RO_Frequency":249.5,"Error_Rate":0.000015}'
+            '"VCCBRAM":1.000,"RO_Frequency":436.0,"Error_Rate":0.000015}'
         )
         parsed = self.receiver._parse_raw_line(sample_json)
         self.assertIsNotNone(parsed)
@@ -129,12 +129,48 @@ class TestFPGAPhysicalUART(unittest.TestCase):
         self.assertAlmostEqual(parsed["VCCINT"], 1.002, places=3)
         self.assertAlmostEqual(parsed["VCCAUX"], 1.801, places=3)
         self.assertAlmostEqual(parsed["VCCBRAM"], 1.000, places=3)
-        self.assertAlmostEqual(parsed["RO_Frequency"], 249.5, places=2)
+        self.assertAlmostEqual(parsed["RO_Frequency"], 436.0, places=2)
         self.assertAlmostEqual(parsed["Error_Rate"], 0.000015, places=6)
 
         # Verified physical derivation of RO stage delay
-        expected_tau = round(100.0 / 249.5, 4)
+        expected_tau = round(100.0 / 436.0, 4)
         self.assertAlmostEqual(parsed["RO_Delay_ns"], expected_tau, places=4)
+        # Backward compatibility: R1..R4 populated with RO_Frequency if omitted
+        self.assertAlmostEqual(parsed["RO_R1"], 436.0, places=2)
+        self.assertAlmostEqual(parsed["RO_R2"], 436.0, places=2)
+        self.assertAlmostEqual(parsed["RO_R3"], 436.0, places=2)
+        self.assertAlmostEqual(parsed["RO_R4"], 436.0, places=2)
+
+    def test_four_region_json_telemetry_parsing(self):
+        # Full four-region telemetry packet from Basys 3 hardware
+        four_region_json = (
+            '{"Temperature":35.8,"VCCINT":1.000,"VCCAUX":1.791,"VCCBRAM":0.999,'
+            '"RO_R1":436.3,"RO_R2":435.8,"RO_R3":436.1,"RO_R4":435.9,'
+            '"RO_Frequency":436.0,"Error_Rate":0.000000}'
+        )
+        parsed = self.receiver._parse_raw_line(four_region_json)
+        self.assertIsNotNone(parsed)
+        self.assertAlmostEqual(parsed["Temperature"], 35.8, places=2)
+        self.assertAlmostEqual(parsed["VCCINT"], 1.000, places=3)
+        self.assertAlmostEqual(parsed["RO_R1"], 436.3, places=2)
+        self.assertAlmostEqual(parsed["RO_R2"], 435.8, places=2)
+        self.assertAlmostEqual(parsed["RO_R3"], 436.1, places=2)
+        self.assertAlmostEqual(parsed["RO_R4"], 435.9, places=2)
+        self.assertAlmostEqual(parsed["RO_Frequency"], 436.0, places=2)
+
+        # Verify regional delay derivations: tau = 100 / f_MHz
+        self.assertAlmostEqual(parsed["RO_R1_Delay_ns"], round(100.0 / 436.3, 4), places=4)
+        self.assertAlmostEqual(parsed["RO_R2_Delay_ns"], round(100.0 / 435.8, 4), places=4)
+        self.assertAlmostEqual(parsed["RO_R3_Delay_ns"], round(100.0 / 436.1, 4), places=4)
+        self.assertAlmostEqual(parsed["RO_R4_Delay_ns"], round(100.0 / 435.9, 4), places=4)
+
+        # Verify provenance tags
+        prov = parsed["Provenance"]
+        self.assertEqual(prov["RO_R1"], "MEASURED")
+        self.assertEqual(prov["RO_R1_Delay_ns"], "DERIVED")
+        self.assertEqual(prov["RO_R4"], "MEASURED")
+        self.assertEqual(prov["RO_R4_Delay_ns"], "DERIVED")
+
 
     # -------------------------------------------------------------------------
     # Test 4: Physical Derivation of RO Delay (N=5 stages)
