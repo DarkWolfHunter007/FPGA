@@ -320,6 +320,9 @@ class LiveUARTDataSource:
         self.receiver.disconnect()
 
     def poll_hardware(self) -> Optional[Dict[str, Any]]:
+        # Allow initial packet capture on fresh connection if buffer is currently empty
+        if not self.buffer and self.receiver.is_port_open:
+            time.sleep(0.15)
         last_packet = None
         while True:
             packet = self.receiver.read_packet()

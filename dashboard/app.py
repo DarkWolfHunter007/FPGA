@@ -105,6 +105,12 @@ def load_ml_pipeline():
         return None, None, f"Failed to deserialize model: {str(e)}"
 
 
+@st.cache_resource(show_spinner=False)
+def get_shared_uart_source(port: str) -> LiveUARTDataSource:
+    """Provides a singleton LiveUARTDataSource shared across tabs and reruns to prevent COM port lockouts."""
+    return LiveUARTDataSource(port=port)
+
+
 # =============================================================================
 # Session State Initialization
 # =============================================================================
@@ -133,7 +139,7 @@ if "mock_source" not in st.session_state:
         st.session_state.mock_source = None
 if "uart_source" not in st.session_state:
     initial_port = detected_fpga_port or "COM10"
-    st.session_state.uart_source = LiveUARTDataSource(port=initial_port)
+    st.session_state.uart_source = get_shared_uart_source(initial_port)
 
 # If in Physical UART mode and port is closed, attempt auto-connect (unless user explicitly disconnected)
 if st.session_state.data_mode == "Physical UART Stream (Artix-7)":
@@ -628,6 +634,9 @@ try:
                         st.session_state.data_mode = "Dynamic Simulation Stream"
                         st.rerun()
 
+            if rcv.is_port_open and st.session_state.get("auto_refresh", True):
+                time.sleep(1)
+                st.rerun()
             st.stop()
 
 except Exception as e:
