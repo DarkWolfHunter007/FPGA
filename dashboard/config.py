@@ -12,6 +12,7 @@ Precedence Rule:
 """
 
 import sys
+import math
 from pathlib import Path
 from enum import Enum
 from typing import Dict, Any, List, Optional, Tuple
@@ -352,6 +353,332 @@ REGIONAL_CONFIG: Dict[str, Dict[str, Any]] = {
         "description": "Monitors logic timing propagation in Southeast silicon quadrant"
     }
 }
+
+
+# =============================================================================
+# Regional Baseline Validation & Health Evaluation Architecture
+# =============================================================================
+
+def validate_regional_baseline(
+    region_id: str,
+    baseline_input: Any
+) -> Tuple[bool, float, str, str]:
+    """
+    Validates a candidate regional baseline frequency against physical plausibility
+    and the healthy operating envelope for the specified Artix-7 quadrant.
+
+    Distinction Between Configured Nominal and Calibrated Baseline:
+      - Configured Nominal: Factory design benchmark derived from silicon characterization
+        (e.g., 435.8 MHz for R2). Authoritative fallback when calibration is absent/invalid.
+      - Calibrated Baseline: Board-specific reference frequency captured during verified
+        healthy operating conditions.
+      - Safety Invariant: A candidate baseline that falls below the warning or critical
+        threshold (e.g. ~322.2 MHz) MUST NOT be accepted as a valid baseline. Accepting an
+        unhealthy frequency as baseline would poison drift calculation and make severe
+        hardware degradation appear as zero-drift "Healthy".
+
+    Returns:
+        (is_valid, selected_baseline_mhz, baseline_source, diagnostic_reason)
+    """
+    r_meta = REGIONAL_CONFIG.get(region_id, REGIONAL_CONFIG["R1"])
+    f_nom = float(r_meta["nominal_freq"])
+    warn_bound = float(r_meta.get("warning_freq", round(f_nom * 0.97, 1)))
+
+    if baseline_input is None or baseline_input == "":
+        return (True, f_nom, "FACTORY_NOMINAL", f"Using configured factory nominal ({f_nom:.1f} MHz)")
+
+    try:
+        b_val = float(baseline_input)
+        if not math.isfinite(b_val):
+            raise ValueError("Non-finite baseline")
+    except (TypeError, ValueError):
+        return (
+            False,
+            f_nom,
+            "FACTORY_NOMINAL_FALLBACK",
+            f"Invalid non-numeric baseline ('{baseline_input}'); fell back to factory nominal ({f_nom:.1f} MHz)"
+        )
+
+    # Physical sensor limits [10.0, 800.0] MHz
+    phys_min = float(SENSOR_CONFIG["RO_Frequency"]["physical_min"])
+    phys_max = float(SENSOR_CONFIG["RO_Frequency"]["physical_max"])
+    if not (phys_min <= b_val <= phys_max):
+        return (
+            False,
+            f_nom,
+            "FACTORY_NOMINAL_FALLBACK",
+            f"Physically impossible baseline ({b_val:.1f} MHz); fell back to factory nominal ({f_nom:.1f} MHz)"
+        )
+
+    # Baseline health validation: A reference baseline must reside in the healthy envelope
+    if b_val < warn_bound:
+        return (
+            False,
+            f_nom,
+            "FACTORY_NOMINAL_FALLBACK",
+            f"Unhealthy baseline ({b_val:.1f} MHz < {warn_bound:.1f} MHz warning boundary) rejected; fell back to factory nominal ({f_nom:.1f} MHz)"
+        )
+
+    crit_high = float(SENSOR_CONFIG["RO_Frequency"]["critical_high"])
+    if b_val > crit_high:
+        return (
+            False,
+            f_nom,
+            "FACTORY_NOMINAL_FALLBACK",
+            f"Over-frequency baseline ({b_val:.1f} MHz > {crit_high:.1f} MHz) rejected; fell back to factory nominal ({f_nom:.1f} MHz)"
+        )
+
+    return (True, b_val, "CALIBRATED_BOARD", f"Calibrated board baseline ({b_val:.2f} MHz)")
+
+
+def evaluate_regional_health(
+    region_id: str,
+    measurement: Any,
+    baseline_freq: Optional[float] = None,
+    provenance: str = "MEASURED"
+) -> Dict[str, Any]:
+    """
+    Single canonical evaluation function for regional FPGA health (R1..R4 quadrants).
+
+    Severity Precedence Architecture:
+      1. Input Validity & Physical Sensor Limits:
+         Missing, non-numeric, or non-finite inputs are marked PHYSICALLY_INVALID / Degraded.
+         They are NEVER silently classified as Healthy.
+      2. Validated Baseline Selection:
+         Candidate baselines are validated via validate_regional_baseline() to prevent
+         degraded samples (e.g. 322.2 MHz) from poisoning zero-drift logic.
+      3. Hard Engineering Critical Limits (ABSOLUTE PRECEDENCE):
+         If measured frequency violates the authoritative critical boundary (e.g. R2 <= 411.8 MHz)
+         or critical over-frequency (>= 460 MHz), the region is unconditionally classified as
+         Degraded (Critical), regardless of how small the baseline drift may appear.
+      4. Hard Engineering Warning Limits & Operating Envelope:
+         If measured frequency is below the warning boundary (e.g. R2 <= 422.7 MHz) or exceeds
+         warning high (447 MHz), the region is classified as Warning.
+      5. Baseline Drift Analysis:
+         Drift is evaluated as a separate diagnostic metric. If timing degradation exceeds
+         the configured drop limit (-5.5% or -3.0%), appropriate severity is applied.
+
+    Returns:
+        Structured dictionary matching both regional map rendering and engineering assessment needs.
+    """
+    r_meta = REGIONAL_CONFIG.get(region_id, REGIONAL_CONFIG["R1"])
+    f_nom = float(r_meta["nominal_freq"])
+    crit_drop = float(r_meta.get("critical_drop_pct", 5.5))
+    warn_drop = float(r_meta.get("warning_drop_pct", 3.0))
+    crit_bound = float(r_meta.get("critical_freq", round(f_nom * (1.0 - crit_drop / 100.0), 1)))
+    warn_bound = float(r_meta.get("warning_freq", round(f_nom * (1.0 - warn_drop / 100.0), 1)))
+
+    # Step 1: Validate baseline
+    is_base_valid, f_base, base_source, base_note = validate_regional_baseline(region_id, baseline_freq)
+
+    # Step 2: Input validity check
+    is_valid = True
+    f_meas = 0.0
+    try:
+        if measurement is None:
+            raise ValueError("Measurement is None")
+        f_meas = float(measurement)
+        if not math.isfinite(f_meas):
+            raise ValueError("Measurement is non-finite")
+    except (TypeError, ValueError):
+        is_valid = False
+        f_meas = 0.0
+
+    if not is_valid:
+        state = "Degraded"
+        severity = LimitSeverity.PHYSICALLY_INVALID
+        indicator = "Missing / Invalid Telemetry"
+        reason = f"Region {region_id} ({r_meta['quadrant']}): Invalid non-numeric or missing frequency reading ('{measurement}')"
+        return {
+            "id": region_id,
+            "name": r_meta["name"],
+            "quadrant": r_meta["quadrant"],
+            "clock_region": r_meta["clock_region"],
+            "pblock": r_meta["pblock"],
+            "slice_range": r_meta["slice_range"],
+            "current_freq": 0.0,
+            "frequency": 0.0,
+            "baseline_freq": round(f_base, 2),
+            "baseline_frequency": round(f_base, 2),
+            "nominal_freq": round(f_nom, 2),
+            "critical_freq": round(crit_bound, 1),
+            "critical_boundary": round(crit_bound, 1),
+            "warning_freq": round(warn_bound, 1),
+            "warning_boundary": round(warn_bound, 1),
+            "drift_mhz": 0.0,
+            "drift_pct": 0.0,
+            "delay_ns": 0.0,
+            "baseline_delay_ns": round(calculate_ro_delay_ns(f_base, stages=RO_STAGES), 4),
+            "delay_drift_pct": 0.0,
+            "state": state,
+            "severity": severity,
+            "color": HEALTH_COLORS["Degraded"],
+            "bg": STATUS_BG_COLORS["Degraded"],
+            "border": "rgba(255, 23, 68, 0.55)",
+            "indicator": indicator,
+            "reason": reason,
+            "is_valid": False,
+            "baseline_source": base_source,
+            "baseline_note": base_note,
+            "provenance": provenance if provenance != "MEASURED" else "INVALID"
+        }
+
+    # Step 3: Physical plausibility check [10.0, 800.0] MHz
+    phys_min = float(SENSOR_CONFIG["RO_Frequency"]["physical_min"])
+    phys_max = float(SENSOR_CONFIG["RO_Frequency"]["physical_max"])
+    if not (phys_min <= f_meas <= phys_max):
+        state = "Degraded"
+        severity = LimitSeverity.PHYSICALLY_INVALID
+        indicator = f"Physically Impossible ({f_meas:.1f} MHz)"
+        reason = f"Region {region_id} ({r_meta['quadrant']}): Physical sensor limit breached ({f_meas:.1f} MHz outside [{phys_min:.1f}, {phys_max:.1f}] MHz)"
+        delay_ns = calculate_ro_delay_ns(f_meas, stages=RO_STAGES) if f_meas > 0 else 0.0
+        return {
+            "id": region_id,
+            "name": r_meta["name"],
+            "quadrant": r_meta["quadrant"],
+            "clock_region": r_meta["clock_region"],
+            "pblock": r_meta["pblock"],
+            "slice_range": r_meta["slice_range"],
+            "current_freq": round(f_meas, 2),
+            "frequency": round(f_meas, 2),
+            "baseline_freq": round(f_base, 2),
+            "baseline_frequency": round(f_base, 2),
+            "nominal_freq": round(f_nom, 2),
+            "critical_freq": round(crit_bound, 1),
+            "critical_boundary": round(crit_bound, 1),
+            "warning_freq": round(warn_bound, 1),
+            "warning_boundary": round(warn_bound, 1),
+            "drift_mhz": round(f_meas - f_base, 2),
+            "drift_pct": round(((f_meas - f_base) / f_base) * 100.0, 2) if f_base > 0 else 0.0,
+            "delay_ns": round(delay_ns, 4),
+            "baseline_delay_ns": round(calculate_ro_delay_ns(f_base, stages=RO_STAGES), 4),
+            "delay_drift_pct": 0.0,
+            "state": state,
+            "severity": severity,
+            "color": HEALTH_COLORS["Degraded"],
+            "bg": STATUS_BG_COLORS["Degraded"],
+            "border": "rgba(255, 23, 68, 0.55)",
+            "indicator": indicator,
+            "reason": reason,
+            "is_valid": False,
+            "baseline_source": base_source,
+            "baseline_note": base_note,
+            "provenance": provenance
+        }
+
+    # Step 4: Derived delay and drift calculations
+    drift_mhz = f_meas - f_base
+    drift_pct = (drift_mhz / f_base) * 100.0 if f_base > 0 else 0.0
+    delay_ns = calculate_ro_delay_ns(f_meas, stages=RO_STAGES)
+    base_delay_ns = calculate_ro_delay_ns(f_base, stages=RO_STAGES)
+    delay_drift_pct = ((delay_ns - base_delay_ns) / base_delay_ns) * 100.0 if base_delay_ns > 0 else 0.0
+
+    crit_high = float(SENSOR_CONFIG["RO_Frequency"]["critical_high"])
+    warn_high = float(SENSOR_CONFIG["RO_Frequency"]["warning_high"])
+
+    # Step 5: Hard Critical Limits Evaluation (Absolute Precedence over Drift)
+    if f_meas <= crit_bound or drift_pct <= -crit_drop or f_meas >= crit_high:
+        state = "Degraded"
+        severity = LimitSeverity.CRITICAL
+        color = HEALTH_COLORS["Degraded"]
+        bg = STATUS_BG_COLORS["Degraded"]
+        border = "rgba(255, 145, 0, 0.55)"
+
+        if f_meas <= crit_bound:
+            indicator = f"Below critical boundary ({f_meas:.1f} <= {crit_bound:.1f} MHz)"
+            reason = (
+                f"Region {region_id} ({r_meta['quadrant']}): Critical RO timing limit violated: "
+                f"measured frequency = {f_meas:.1f} MHz (critical boundary = {crit_bound:.1f} MHz, {drift_pct:+.2f}% drift); "
+                f"equivalent derived delay = {delay_ns:.4f} ns (derived from RO frequency)."
+            )
+        elif drift_pct <= -crit_drop:
+            indicator = f"Severe timing drift ({drift_pct:+.2f}%)"
+            reason = (
+                f"Region {region_id} ({r_meta['quadrant']}): Critical RO timing drift: "
+                f"measured frequency = {f_meas:.1f} MHz ({drift_pct:+.2f}% drift exceeds -{crit_drop:.1f}% limit); "
+                f"equivalent derived delay = {delay_ns:.4f} ns (derived from RO frequency)."
+            )
+        else:
+            indicator = f"Critical over-frequency ({f_meas:.1f} >= {crit_high:.1f} MHz)"
+            reason = (
+                f"Region {region_id} ({r_meta['quadrant']}): Critical RO over-frequency: "
+                f"measured frequency = {f_meas:.1f} MHz exceeds safe limit {crit_high:.1f} MHz; "
+                f"equivalent derived delay = {delay_ns:.4f} ns (derived from RO frequency)."
+            )
+
+    # Step 6: Warning Limits Evaluation
+    elif f_meas <= warn_bound or drift_pct <= -warn_drop or f_meas >= warn_high:
+        state = "Warning"
+        severity = LimitSeverity.WARNING
+        color = HEALTH_COLORS["Warning"]
+        bg = STATUS_BG_COLORS["Warning"]
+        border = "rgba(255, 214, 0, 0.5)"
+
+        if f_meas <= warn_bound:
+            indicator = f"Below warning boundary ({f_meas:.1f} <= {warn_bound:.1f} MHz)"
+            reason = (
+                f"Region {region_id} ({r_meta['quadrant']}): RO timing drift warning: "
+                f"measured frequency = {f_meas:.1f} MHz (warning boundary = {warn_bound:.1f} MHz, {drift_pct:+.2f}% drift); "
+                f"equivalent derived delay = {delay_ns:.4f} ns (derived from RO frequency)."
+            )
+        elif drift_pct <= -warn_drop:
+            indicator = f"Moderate timing drift ({drift_pct:+.2f}%)"
+            reason = (
+                f"Region {region_id} ({r_meta['quadrant']}): RO timing drift warning: "
+                f"measured frequency = {f_meas:.1f} MHz ({drift_pct:+.2f}% drift exceeds -{warn_drop:.1f}% limit); "
+                f"equivalent derived delay = {delay_ns:.4f} ns (derived from RO frequency)."
+            )
+        else:
+            indicator = f"Elevated frequency ({f_meas:.1f} >= {warn_high:.1f} MHz)"
+            reason = (
+                f"Region {region_id} ({r_meta['quadrant']}): RO over-frequency warning: "
+                f"measured frequency = {f_meas:.1f} MHz exceeds nominal operating ceiling {warn_high:.1f} MHz; "
+                f"equivalent derived delay = {delay_ns:.4f} ns (derived from RO frequency)."
+            )
+
+    # Step 7: Healthy
+    else:
+        state = "Healthy"
+        severity = LimitSeverity.NORMAL
+        color = HEALTH_COLORS["Healthy"]
+        bg = STATUS_BG_COLORS["Healthy"]
+        border = "rgba(0, 230, 118, 0.4)"
+        indicator = "Nominal Timing Propagation"
+        reason = f"Region {region_id} ({r_meta['quadrant']}): Operating within nominal timing limits ({f_meas:.1f} MHz, drift {drift_pct:+.2f}%)"
+
+    return {
+        "id": region_id,
+        "name": r_meta["name"],
+        "quadrant": r_meta["quadrant"],
+        "clock_region": r_meta["clock_region"],
+        "pblock": r_meta["pblock"],
+        "slice_range": r_meta["slice_range"],
+        "current_freq": round(f_meas, 2),
+        "frequency": round(f_meas, 2),
+        "baseline_freq": round(f_base, 2),
+        "baseline_frequency": round(f_base, 2),
+        "nominal_freq": round(f_nom, 2),
+        "critical_freq": round(crit_bound, 1),
+        "critical_boundary": round(crit_bound, 1),
+        "warning_freq": round(warn_bound, 1),
+        "warning_boundary": round(warn_bound, 1),
+        "drift_mhz": round(drift_mhz, 2),
+        "drift_pct": round(drift_pct, 2),
+        "delay_ns": round(delay_ns, 4),
+        "baseline_delay_ns": round(base_delay_ns, 4),
+        "delay_drift_pct": round(delay_drift_pct, 2),
+        "state": state,
+        "severity": severity,
+        "color": color,
+        "bg": bg,
+        "border": border,
+        "indicator": indicator,
+        "reason": reason,
+        "is_valid": True,
+        "baseline_source": base_source,
+        "baseline_note": base_note,
+        "provenance": provenance
+    }
 
 
 def get_error_risk_label(error_rate: float) -> Tuple[str, str, str]:
@@ -927,65 +1254,33 @@ def evaluate_engineering_limits(
             ro_k = f"RO_{r_id}"
             if ro_k not in telemetry:
                 continue
-            r_meta = REGIONAL_CONFIG[r_id]
-            f_meas = float(telemetry[ro_k])
-            f_base = float(regional_baselines.get(ro_k, r_meta["nominal_freq"]))
-            drift_mhz = f_meas - f_base
-            drift_pct = (drift_mhz / f_base) * 100.0 if f_base > 0 else 0.0
-            tau_ns = calculate_ro_delay_ns(f_meas, stages=RO_STAGES)
-            crit_drop = r_meta.get("critical_drop_pct", 5.5)
-            warn_drop = r_meta.get("warning_drop_pct", 3.0)
-            crit_f = round(f_base * (1.0 - crit_drop / 100.0), 1)
-            warn_f = round(f_base * (1.0 - warn_drop / 100.0), 1)
+            r_meas = telemetry[ro_k]
+            r_base = regional_baselines.get(ro_k)
+            prov = provenance_map.get(ro_k, "MEASURED")
 
-            reg_sev = LimitSeverity.NORMAL
-            reg_state = "Healthy"
-            reg_reason = None
+            reg_eval = evaluate_regional_health(
+                region_id=r_id,
+                measurement=r_meas,
+                baseline_freq=r_base,
+                provenance=prov
+            )
+            regional_evals[r_id] = reg_eval
 
-            if drift_pct <= -crit_drop:
-                reg_sev = LimitSeverity.CRITICAL
-                reg_state = "Degraded"
-                reg_reason = (
-                    f"Region {r_id} ({r_meta['quadrant']}): Critical RO timing limit violated: "
-                    f"measured frequency = {f_meas:.1f} MHz (critical boundary = {crit_f:.1f} MHz, {drift_pct:.2f}% drift); "
-                    f"equivalent derived delay = {tau_ns:.4f} ns (derived from RO frequency)."
-                )
-            elif drift_pct <= -warn_drop:
-                reg_sev = LimitSeverity.WARNING
-                reg_state = "Warning"
-                reg_reason = (
-                    f"Region {r_id} ({r_meta['quadrant']}): RO timing drift warning: "
-                    f"measured frequency = {f_meas:.1f} MHz (warning boundary = {warn_f:.1f} MHz, {drift_pct:.2f}% drift); "
-                    f"equivalent derived delay = {tau_ns:.4f} ns (derived from RO frequency)."
-                )
-
-            regional_evals[r_id] = {
-                "id": r_id,
-                "name": r_meta["name"],
-                "quadrant": r_meta["quadrant"],
-                "frequency": f_meas,
-                "baseline_frequency": f_base,
-                "drift_pct": drift_pct,
-                "delay_ns": tau_ns,
-                "severity": reg_sev,
-                "state": reg_state,
-                "reason": reg_reason
-            }
-
-            if reg_sev == LimitSeverity.CRITICAL and worst_reg_sev != LimitSeverity.CRITICAL:
+            reg_sev = reg_eval["severity"]
+            if reg_sev in (LimitSeverity.CRITICAL, LimitSeverity.PHYSICALLY_INVALID) and worst_reg_sev != LimitSeverity.CRITICAL:
                 worst_reg_sev = LimitSeverity.CRITICAL
                 worst_reg_id = r_id
-                worst_reg_reason = reg_reason
-                worst_reg_meas = f"{f_meas:.1f} MHz ({r_id})"
-                worst_reg_lim = f"{crit_f:.1f} MHz ({r_id} critical boundary)"
-                worst_reg_delay = f"{tau_ns:.4f} ns (derived from RO frequency)"
+                worst_reg_reason = reg_eval["reason"]
+                worst_reg_meas = f"{reg_eval['current_freq']:.1f} MHz ({r_id})"
+                worst_reg_lim = f"{reg_eval['critical_freq']:.1f} MHz ({r_id} critical boundary)"
+                worst_reg_delay = f"{reg_eval['delay_ns']:.4f} ns (derived from RO frequency)"
             elif reg_sev == LimitSeverity.WARNING and worst_reg_sev == LimitSeverity.NORMAL:
                 worst_reg_sev = LimitSeverity.WARNING
                 worst_reg_id = r_id
-                worst_reg_reason = reg_reason
-                worst_reg_meas = f"{f_meas:.1f} MHz ({r_id})"
-                worst_reg_lim = f"{warn_f:.1f} MHz ({r_id} warning boundary)"
-                worst_reg_delay = f"{tau_ns:.4f} ns (derived from RO frequency)"
+                worst_reg_reason = reg_eval["reason"]
+                worst_reg_meas = f"{reg_eval['current_freq']:.1f} MHz ({r_id})"
+                worst_reg_lim = f"{reg_eval['warning_freq']:.1f} MHz ({r_id} warning boundary)"
+                worst_reg_delay = f"{reg_eval['delay_ns']:.4f} ns (derived from RO frequency)"
 
     # 2. Evaluate Non-Timing Physical Sensor Channels
     phys_channels = ["Temperature", "VCCINT", "VCCAUX", "VCCBRAM", "Error_Rate"]
