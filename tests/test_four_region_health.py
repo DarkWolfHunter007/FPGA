@@ -74,6 +74,43 @@ class TestFourRegionHealth(unittest.TestCase):
         r1 = next(r for r in regions if r["id"] == "R1")
         self.assertEqual(r1["state"], "Healthy")
 
+    @unittest.expectedFailure
+    def test_r2_critical_with_low_baseline_inconsistency_regression(self):
+        """
+        REGRESSION TEST:
+        Demonstrates the confirmed bug where an R2 measured frequency around 322.1 MHz
+        is evaluated against a low baseline of 322.20 MHz (drift = -0.03%).
+        Because its drift is near zero, the current regional map incorrectly declares R2
+        as Healthy, even though 322.1 MHz violates the critical boundary of 411.8 MHz.
+        """
+        telemetry = {
+            "RO_Frequency": 322.3,
+            "RO_R1": 436.3,
+            "RO_R2": 322.1,  # Critical violation (configured critical boundary is 411.8 MHz)
+            "RO_R3": 436.1,
+            "RO_R4": 435.9,
+            "Temperature": 35.0,
+            "VCCINT": 1.000,
+            "Error_Rate": 0.00001
+        }
+        regional_baselines = {
+            "RO_R1": 436.3,
+            "RO_R2": 322.20,  # Erroneously accepted degraded baseline
+            "RO_R3": 436.1,
+            "RO_R4": 435.9
+        }
+        regions = generate_four_region_data(telemetry, regional_baselines=regional_baselines)
+        r2 = next(r for r in regions if r["id"] == "R2")
+
+        # R2 must NOT be Healthy when 322.1 MHz violates the critical limit (411.8 MHz)
+        self.assertNotEqual(
+            r2["state"],
+            "Healthy",
+            "Bug reproduced: R2 is falsely marked Healthy because drift from 322.2 MHz is near zero, "
+            "ignoring the hard critical boundary (411.8 MHz)."
+        )
+        self.assertEqual(r2["state"], "Degraded")
+
     def test_render_four_region_map_html(self):
         """Verify HTML generation produces 2x2 grid with quadrant details."""
         telemetry = {
