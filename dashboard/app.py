@@ -833,11 +833,21 @@ render_ring_oscillator_section(
 # 5. FPGA HEALTH TRENDS (Dedicated Independent Graphs)
 st.html('<div class="section-header">📈 FPGA Health Trends <span class="tag">INDEPENDENT SENSOR DYNAMICS</span></div>')
 
-col_scale1, col_scale2 = st.columns([3, 1])
+col_scale1, col_scale2, col_scale3 = st.columns([2.5, 1.2, 1.3])
 with col_scale1:
-    st.caption("🔍 **Adaptive Dynamic Scaling**: Subtle deviations & noise are magnified for high-resolution inspection. Major excursions dynamically widen the scale.")
+    st.caption("🔍 **Adaptive Dynamic Scaling**: Magnifies micro-fluctuations & sensor jitter for high-detail inspection; auto-widens for major excursions.")
 with col_scale2:
-    adaptive_zoom = st.toggle("Adaptive Zoom", value=True, help="Magnify small fluctuations when enabled, or use fixed full scale when disabled.")
+    adaptive_zoom = st.toggle("Adaptive Zoom", value=True, help="Automatically magnifies small fluctuations when enabled.")
+with col_scale3:
+    zoom_choice = st.select_slider(
+        "Zoom Level",
+        options=["Standard (1x)", "High (3x)", "Ultra Zoom (10x)"],
+        value="Ultra Zoom (10x)",
+        disabled=not adaptive_zoom,
+        help="Higher zoom narrows headroom to focus strictly on tiny variations with maximum vertical detail."
+    )
+    zoom_map = {"Standard (1x)": 1.0, "High (3x)": 3.0, "Ultra Zoom (10x)": 10.0}
+    active_zoom_factor = zoom_map.get(zoom_choice, 5.0)
 
 trend_tab1, trend_tab2, trend_tab3, trend_tab4, trend_tab5 = st.tabs([
     "⏱️ RO Frequency & Timing Delay",
@@ -851,30 +861,30 @@ with trend_tab1:
     col_g1, col_g2 = st.columns(2)
     with col_g1:
         st.caption("**Ring Oscillator Frequency Trend (MHz)** (Cyan line: Calibrated Overall Frequency, Blue dashed: Baseline 436.0 MHz, Orange/Red dashed: Warning/Critical limits)")
-        st.altair_chart(create_ro_frequency_chart(history_df, baseline_freq=base_ro_freq, adaptive_scaling=adaptive_zoom), width="stretch")
+        st.altair_chart(create_ro_frequency_chart(history_df, baseline_freq=base_ro_freq, adaptive_scaling=adaptive_zoom, zoom_factor=active_zoom_factor), width="stretch")
     with col_g2:
         st.caption("**Ring Oscillator Delay Trend (Derived RO Stage Delay in ns)** (Magenta line: Calibrated Derived Delay, Purple dashed: Baseline 0.2294 ns, Orange/Red dashed: Warning/Critical limits)")
-        st.altair_chart(create_ro_delay_chart(history_df, baseline_delay=base_ro_delay, adaptive_scaling=adaptive_zoom), width="stretch")
+        st.altair_chart(create_ro_delay_chart(history_df, baseline_delay=base_ro_delay, adaptive_scaling=adaptive_zoom, zoom_factor=active_zoom_factor), width="stretch")
 
 with trend_tab2:
     st.caption("**FPGA Die Temperature Trend (°C)** (Red line: measurement, Green dashed: baseline 35°C, Orange dashed: 50°C warning)")
-    st.altair_chart(create_temperature_chart(history_df, baseline_temp=base_temp, adaptive_scaling=adaptive_zoom), width="stretch")
+    st.altair_chart(create_temperature_chart(history_df, baseline_temp=base_temp, adaptive_scaling=adaptive_zoom, zoom_factor=active_zoom_factor), width="stretch")
 
 with trend_tab3:
     col_v1, col_v2, col_v3 = st.columns(3)
     with col_v1:
         st.caption("**VCCINT (1.000V Core Rail)**")
-        st.altair_chart(create_voltage_chart(history_df, "VCCINT", 1.000, adaptive_scaling=adaptive_zoom), width="stretch")
+        st.altair_chart(create_voltage_chart(history_df, "VCCINT", 1.000, adaptive_scaling=adaptive_zoom, zoom_factor=active_zoom_factor), width="stretch")
     with col_v2:
         st.caption("**VCCAUX (1.800V Auxiliary Rail)**")
-        st.altair_chart(create_voltage_chart(history_df, "VCCAUX", 1.800, adaptive_scaling=adaptive_zoom), width="stretch")
+        st.altair_chart(create_voltage_chart(history_df, "VCCAUX", 1.800, adaptive_scaling=adaptive_zoom, zoom_factor=active_zoom_factor), width="stretch")
     with col_v3:
         st.caption("**VCCBRAM (1.000V BRAM Rail)**")
-        st.altair_chart(create_voltage_chart(history_df, "VCCBRAM", 1.000, adaptive_scaling=adaptive_zoom), width="stretch")
+        st.altair_chart(create_voltage_chart(history_df, "VCCBRAM", 1.000, adaptive_scaling=adaptive_zoom, zoom_factor=active_zoom_factor), width="stretch")
 
 with trend_tab4:
     st.caption("**Functional Error Rate Trend** (Amber area: soft error probability)")
-    st.altair_chart(create_error_rate_chart(history_df, adaptive_scaling=adaptive_zoom), width="stretch")
+    st.altair_chart(create_error_rate_chart(history_df, adaptive_scaling=adaptive_zoom, zoom_factor=active_zoom_factor), width="stretch")
 
 with trend_tab5:
     col_s1, col_s2 = st.columns(2)

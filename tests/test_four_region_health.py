@@ -709,7 +709,15 @@ class TestFourRegionHealth(unittest.TestCase):
         small_span = small_domain[1] - small_domain[0]
         # Small deviation span should be tight (< 2.5 MHz) magnifying small variations
         self.assertLess(small_span, 2.5)
-        self.assertGreaterEqual(small_span, 0.4)
+        self.assertGreater(small_span, 0.0)
+
+        # Test Ultra Zoom (10x) produces an even tighter domain than standard
+        freq_ultra = create_ro_frequency_chart(df_small, baseline_freq=436.0, adaptive_scaling=True, zoom_factor=10.0)
+        ultra_dict = freq_ultra.to_dict()
+        ultra_domain = ultra_dict["layer"][0]["encoding"]["y"]["scale"]["domain"]
+        ultra_span = ultra_domain[1] - ultra_domain[0]
+        self.assertLess(ultra_span, small_span)
+        self.assertGreater(ultra_span, 0.0)
 
         # 2. Test Major Deviation: RO Frequency drops severely (436 down to ~415 MHz)
         df_major = pd.DataFrame([{

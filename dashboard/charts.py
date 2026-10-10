@@ -130,7 +130,8 @@ def create_temperature_chart(
     df: pd.DataFrame,
     baseline_temp: float = 35.0,
     warning_temp: float = 50.0,
-    adaptive_scaling: bool = True
+    adaptive_scaling: bool = True,
+    zoom_factor: float = 3.0
 ) -> alt.Chart:
     """Graph 3: FPGA Die Temperature Trend (°C) with adaptive deviation scaling."""
     plot_df = df.reset_index()
@@ -141,11 +142,12 @@ def create_temperature_chart(
             plot_df["Temperature"],
             baseline=baseline_temp,
             thresholds=[warning_temp],
-            min_span=0.8,
+            min_span=0.4,
             small_dev_threshold=2.5,
-            small_dev_padding=0.20,
-            major_dev_padding=0.12,
-            clamp_min=0.0
+            small_dev_padding=0.10,
+            major_dev_padding=0.10,
+            clamp_min=0.0,
+            zoom_factor=zoom_factor
         )
         scale = alt.Scale(domain=domain, zero=False)
     else:
@@ -189,7 +191,8 @@ def create_ro_frequency_chart(
     baseline_freq: float = 436.0,
     warning_freq: float = 422.9,
     critical_freq: float = 412.0,
-    adaptive_scaling: bool = True
+    adaptive_scaling: bool = True,
+    zoom_factor: float = 3.0
 ) -> alt.Chart:
     """Graph 1: Ring Oscillator Frequency Trend (MHz) with adaptive deviation scaling."""
     plot_df = df.reset_index()
@@ -210,10 +213,11 @@ def create_ro_frequency_chart(
             plot_df["RO_Frequency"],
             baseline=baseline_freq,
             thresholds=[warning_freq, critical_freq],
-            min_span=0.8,
+            min_span=0.4,
             small_dev_threshold=1.5,
-            small_dev_padding=0.20,
-            major_dev_padding=0.10
+            small_dev_padding=0.10,
+            major_dev_padding=0.10,
+            zoom_factor=zoom_factor
         )
         scale = alt.Scale(domain=domain, zero=False)
     else:
@@ -263,7 +267,8 @@ def create_ro_delay_chart(
     baseline_delay: float = 0.2294,
     warning_delay: float = 0.2365,
     critical_delay: float = 0.2427,
-    adaptive_scaling: bool = True
+    adaptive_scaling: bool = True,
+    zoom_factor: float = 3.0
 ) -> alt.Chart:
     """Graph 2: Ring Oscillator Delay Trend with adaptive deviation scaling."""
     plot_df = df.reset_index()
@@ -274,10 +279,11 @@ def create_ro_delay_chart(
             plot_df["RO_Delay_ns"],
             baseline=baseline_delay,
             thresholds=[warning_delay, critical_delay],
-            min_span=0.0008,
+            min_span=0.0004,
             small_dev_threshold=0.0018,
-            small_dev_padding=0.20,
-            major_dev_padding=0.10
+            small_dev_padding=0.10,
+            major_dev_padding=0.10,
+            zoom_factor=zoom_factor
         )
         scale = alt.Scale(domain=domain, zero=False)
     else:
@@ -327,7 +333,8 @@ def create_ro_delay_chart(
 
 def create_error_rate_chart(
     df: pd.DataFrame,
-    adaptive_scaling: bool = True
+    adaptive_scaling: bool = True,
+    zoom_factor: float = 3.0
 ) -> alt.Chart:
     """Graph 4: Functional Error Rate Trend with adaptive deviation scaling."""
     plot_df = df.reset_index()
@@ -336,13 +343,19 @@ def create_error_rate_chart(
     if adaptive_scaling and "Error_Rate" in plot_df.columns and not plot_df["Error_Rate"].dropna().empty:
         clean = plot_df["Error_Rate"].dropna().astype(float)
         y_max = float(clean.max()) if not clean.empty else 0.000010
+        y_min = float(clean.min()) if not clean.empty else 0.000010
+        zf = max(float(zoom_factor), 1.0)
         if y_max <= 0.000100:
-            # Small deviation (nominal PRBS ~10 ppm): zoom in so 10 ppm curve shows bigger!
-            dom_max = max(round(y_max * 1.35, 6), 0.000025)
+            # Small deviation (nominal PRBS ~10 ppm): zoom tightly around subtle ppm variations
+            spr = max(y_max - y_min, 0.000003 / zf)
+            pad = spr * max(0.08 / (zf ** 0.5), 0.03)
+            dom_min = max(0.0, y_min - pad)
+            dom_max = y_max + pad
+            scale = alt.Scale(domain=[round(dom_min, 6), round(dom_max, 6)], zero=False)
         else:
             # Major deviation (fault injection ~2000 ppm): scale out smoothly
-            dom_max = round(y_max * 1.15, 6)
-        scale = alt.Scale(domain=[0.0, dom_max], zero=True)
+            dom_max = round(y_max * 1.12, 6)
+            scale = alt.Scale(domain=[0.0, dom_max], zero=True)
     else:
         scale = alt.Scale(zero=True)
 
@@ -371,7 +384,8 @@ def create_voltage_chart(
     df: pd.DataFrame,
     rail: str = "VCCINT",
     nominal_voltage: float = 1.000,
-    adaptive_scaling: bool = True
+    adaptive_scaling: bool = True,
+    zoom_factor: float = 3.0
 ) -> alt.Chart:
     """Graph 5: Supply Voltage Rail Trend (V) with adaptive deviation scaling."""
     plot_df = df.reset_index()
@@ -388,11 +402,12 @@ def create_voltage_chart(
         domain, is_small_dev = compute_adaptive_y_domain(
             plot_df[rail],
             baseline=nominal_voltage,
-            min_span=0.010,
+            min_span=0.005,
             small_dev_threshold=0.020,
-            small_dev_padding=0.20,
-            major_dev_padding=0.12,
-            clamp_min=0.0
+            small_dev_padding=0.10,
+            major_dev_padding=0.10,
+            clamp_min=0.0,
+            zoom_factor=zoom_factor
         )
         scale = alt.Scale(domain=domain, zero=False)
     else:
