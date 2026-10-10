@@ -799,6 +799,39 @@ class TestSingleSourceROTimingAndFourRegion(unittest.TestCase):
         self.assertEqual(final_res["final_health"], "Degraded")
         self.assertIn("R3", final_res["override_reasons"][0])
 
+    def test_regional_baseline_validation_and_unhealthy_baseline_protection(self):
+        """
+        Confirms that passing an unhealthy regional baseline (e.g. 322.2 MHz for R2)
+        does not poison the engineering assessment or hide a critical R2 reading.
+        """
+        telemetry = {
+            "Temperature": 35.0,
+            "VCCINT": 1.000,
+            "VCCAUX": 1.800,
+            "VCCBRAM": 1.000,
+            "RO_Frequency": 435.0,
+            "RO_Delay_ns": round(100.0 / 435.0, 4),
+            "Error_Rate": 0.00000,
+            "RO_R1": 436.3,
+            "RO_R2": 322.1,  # Critical limit breached
+            "RO_R3": 436.1,
+            "RO_R4": 435.9,
+        }
+        unhealthy_baselines = {
+            "RO_R1": 436.3,
+            "RO_R2": 322.20,  # Erroneous low baseline
+            "RO_R3": 436.1,
+            "RO_R4": 435.9
+        }
+        assessment = evaluate_engineering_limits(telemetry, regional_baselines=unhealthy_baselines)
+        self.assertEqual(assessment.max_severity, LimitSeverity.CRITICAL)
+        self.assertEqual(assessment.worst_region, "R2")
+        self.assertTrue(assessment.has_hard_violations)
+
+        final_res = determine_final_health("Warning", 0.48, assessment)
+        self.assertEqual(final_res["final_health"], "Degraded")
+        self.assertTrue(final_res["override_applied"])
+
 
 if __name__ == "__main__":
     unittest.main()

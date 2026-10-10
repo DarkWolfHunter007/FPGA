@@ -18,7 +18,13 @@ Physically Honest Fault Model:
 import textwrap
 from typing import List, Dict, Any, Optional
 from config import calculate_ro_delay_ns, RO_STAGES
-from dashboard.config import HEALTH_COLORS, STATUS_BG_COLORS
+from dashboard.config import (
+    HEALTH_COLORS,
+    STATUS_BG_COLORS,
+    REGIONAL_CONFIG,
+    evaluate_regional_health,
+    validate_regional_baseline
+)
 
 # Default nominal benchmarks per region from physical Basys 3 telemetry
 REGIONAL_DEFAULTS = {
@@ -100,74 +106,34 @@ def generate_four_region_data(
     """
     Generates structured physical telemetry and health assessment for the four
     constrained FPGA regions (R1 Northwest, R2 Northeast, R3 Southwest, R4 Southeast).
-    Uses independent regional baselines to avoid forcing identical nominals.
+    Uses the unified evaluate_regional_health() engine to ensure consistent safety limits.
     """
     baselines = regional_baselines or {}
-    global_ro_freq = float(telemetry.get("RO_Frequency", 436.0))
+    global_ro_freq = telemetry.get("RO_Frequency", 436.0)
 
     regions = []
     region_keys = ["R1", "R2", "R3", "R4"]
 
     for r_key in region_keys:
-        meta = REGIONAL_DEFAULTS[r_key]
-        
-        # 1. Measured live frequency (with fallback to global RO)
-        meas_freq = float(telemetry.get(f"RO_{r_key}", global_ro_freq))
-
-        # 2. Independent baseline frequency
-        base_freq = float(baselines.get(f"RO_{r_key}", meta["nominal_freq"]))
-
-        # 3. Frequency drift from regional baseline
-        drift_mhz = meas_freq - base_freq
-        drift_pct = (drift_mhz / base_freq) * 100.0 if base_freq > 0 else 0.0
-
-        # 4. Physical stage delay derivation: tau = 100 / f_MHz
-        delay_ns = calculate_ro_delay_ns(meas_freq, stages=RO_STAGES)
-        base_delay_ns = calculate_ro_delay_ns(base_freq, stages=RO_STAGES)
-        delay_drift_pct = ((delay_ns - base_delay_ns) / base_delay_ns) * 100.0 if base_delay_ns > 0 else 0.0
-
-        # 5. Regional Health State Evaluation (Independent Timing Thresholds)
-        # Warning: Frequency drop > 3.0% (tau increase > 3.1%)
-        # Degraded: Frequency drop > 5.5% (tau increase > 5.8%)
-        if drift_pct <= -5.5:
-            state = "Degraded"
-            color = HEALTH_COLORS["Degraded"]
-            bg = STATUS_BG_COLORS["Degraded"]
-            border = "rgba(255, 145, 0, 0.55)"
-            indicator = "Severe Aging Delay Degradation"
-        elif drift_pct <= -3.0:
-            state = "Warning"
-            color = HEALTH_COLORS["Warning"]
-            bg = STATUS_BG_COLORS["Warning"]
-            border = "rgba(255, 214, 0, 0.5)"
-            indicator = "Moderate Timing Drift / Thermal Load"
+        ro_k = f"RO_{r_key}"
+        if ro_k in telemetry:
+            meas_val = telemetry[ro_k]
+            prov = "MEASURED"
+        elif "RO_Frequency" in telemetry:
+            meas_val = global_ro_freq
+            prov = "DERIVED_GLOBAL"
         else:
-            state = "Healthy"
-            color = HEALTH_COLORS["Healthy"]
-            bg = STATUS_BG_COLORS["Healthy"]
-            border = "rgba(0, 230, 118, 0.4)"
-            indicator = "Nominal Timing Propagation"
+            meas_val = None
+            prov = "MISSING"
 
-        regions.append({
-            "id": r_key,
-            "name": meta["name"],
-            "quadrant": meta["quadrant"],
-            "clock_region": meta["clock_region"],
-            "pblock": meta["pblock"],
-            "slice_range": meta["slice_range"],
-            "current_freq": round(meas_freq, 2),
-            "baseline_freq": round(base_freq, 2),
-            "drift_mhz": round(drift_mhz, 2),
-            "drift_pct": round(drift_pct, 2),
-            "delay_ns": round(delay_ns, 4),
-            "baseline_delay_ns": round(base_delay_ns, 4),
-            "delay_drift_pct": round(delay_drift_pct, 2),
-            "state": state,
-            "color": color,
-            "bg": bg,
-            "border": border,
-            "indicator": indicator
-        })
+        base_val = baselines.get(ro_k)
+        reg_eval = evaluate_regional_health(
+            region_id=r_key,
+            measurement=meas_val,
+            baseline_freq=base_val,
+            provenance=prov
+        )
+        regions.append(reg_eval)
 
     return regions
 
@@ -188,6 +154,8 @@ def render_four_region_map_html(
     for r in regions:
         drift_sign = "+" if r["drift_mhz"] >= 0 else ""
         delay_drift_sign = "+" if r["delay_drift_pct"] >= 0 else ""
+        crit_str = f"{r['critical_boundary']:.1f} MHz" if r.get("critical_boundary") else (f"{r['critical_freq']:.1f} MHz" if r.get("critical_freq") else "N/A")
+        prov_label = r.get("provenance", "MEASURED")
 
         card_htmls.append(f"""
         <div style="
@@ -225,7 +193,7 @@ def render_four_region_map_html(
                     <div style="font-size: 1.15rem; font-weight: 700; color: #F8FAFC; font-family: 'JetBrains Mono', monospace;">
                         {r['current_freq']:.2f} <span style="font-size: 0.75rem; color: #64748B;">MHz</span>
                     </div>
-                    <div style="font-size: 0.72rem; color: #64748B;">Base: {r['baseline_freq']:.2f} MHz</div>
+                    <div style="font-size: 0.72rem; color: #64748B;">Base: {r['baseline_freq']:.2f} MHz | Crit: {crit_str}</div>
                 </div>
                 <div>
                     <div style="font-size: 0.72rem; color: #94A3B8; text-transform: uppercase;">Stage Delay (&tau;)</div>
@@ -239,7 +207,8 @@ def render_four_region_map_html(
             <!-- Timing Drift & Physical Mapping -->
             <div style="font-size: 0.78rem; line-height: 1.4; color: #CBD5E1; margin-bottom: 6px;">
                 <strong>Timing Drift:</strong> <span style="font-family: 'JetBrains Mono', monospace; color: {r['color']}; font-weight: 600;">{drift_sign}{r['drift_mhz']:.2f} MHz ({drift_sign}{r['drift_pct']:.2f}%)</span>
-                <br/><strong>Physical Pblock:</strong> <code style="color: #F1F5F9; font-size: 0.72rem;">{r['pblock']} ({r['clock_region']})</code>
+                <br/><strong>Critical Boundary:</strong> <code style="color: #F87171; font-size: 0.72rem;">{crit_str}</code> | <strong>Provenance:</strong> <span style="color: #94A3B8; font-size: 0.72rem;">{prov_label}</span>
+                <br/><strong>Configured Pblock:</strong> <code style="color: #F1F5F9; font-size: 0.72rem;">{r['pblock']} ({r['clock_region']})</code>
                 <br/><strong>Silicon Coordinates:</strong> <code style="color: #64748B; font-size: 0.70rem;">{r['slice_range']}</code>
             </div>
 
@@ -272,7 +241,7 @@ def render_four_region_map_html(
         <!-- Physical Health Methodology Callout -->
         <div style="margin-top: 14px; padding: 10px 12px; background: rgba(30, 41, 59, 0.6); border-left: 3px solid #38BDF8; border-radius: 4px; font-size: 0.75rem; color: #94A3B8; line-height: 1.45;">
             <strong>Physically Honest Fault Model:</strong> Each regional monitor tracks gate delay (tau = 100 / f_MHz) within its constrained Pblock.
-            RO frequency shift reflects regional NBTI/HCI aging, supply droop, or thermal variation. It does not indicate individual LUT stuck-at faults (addressed via PRBS-7 functional test).
+            RO frequency shift reflects regional NBTI/HCI aging, supply droop, or thermal variation. Floorplan coordinates represent configured Pblock placement constraints in the Vivado floorplan, not dynamically localized physical defect coordinates.
         </div>
     </div>
     """).strip()

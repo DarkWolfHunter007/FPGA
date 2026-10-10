@@ -659,7 +659,12 @@ try:
 
     # Evaluate Centralized Engineering & Physical Operating Limits
     prov_map = meta.get("provenance", {})
-    eng_assessment = evaluate_engineering_limits(latest.to_dict(), provenance_map=prov_map)
+    reg_baselines = meta.get("regional_baselines") or meta.get("baseline", {})
+    eng_assessment = evaluate_engineering_limits(
+        latest.to_dict(),
+        provenance_map=prov_map,
+        regional_baselines=reg_baselines
+    )
     final_health_dict = determine_final_health(ml_pred, ml_conf, eng_assessment)
 
     latest_pred = final_health_dict["final_health"]

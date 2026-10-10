@@ -503,6 +503,108 @@ streamlit run dashboard/app.py
 
 ---
 
-## 10. Research & Engineering Conclusion
+## 10. Regional Silicon Health Precedence, Baseline Semantics & Deterministic Safety Architecture
 
-The **AI-Assisted FPGA Health Monitoring & Predictive Health Management** platform bridges on-chip silicon physical telemetry with modern machine learning and agentic diagnostic reasoning. By directly coupling Ring Oscillator physical propagation delay formulations ($\tau = \frac{1000}{2 \cdot N \cdot f}$) with a 200-tree Random Forest classifier and a LangGraph diagnostic agent, the system provides real-time health classification, quantitative drift tracking, and actionable life-extension guidance for mission-critical FPGA deployments.
+### 10.1 Regional Safety Architecture & Severity Precedence
+
+The FPGA health monitoring system operates across two diagnostic tiers:
+1. **Global Silicon Health:** System-level classification integrating Die Temperature, multi-rail voltages, functional error rates, and worst-case regional timing degradation.
+2. **Four-Region Spatial Health (R1–R4):** Dedicated quadrant-level timing monitoring mapped to physical Pblocks on the Artix-7 fabric (`CLOCKREGION_X0Y2`, `X1Y2`, `X0Y0`, `X1Y0`).
+
+To prevent contradictory UI classifications—where a region violating hard physical limits could be displayed as "Healthy" due to near-zero relative drift—the system enforces a unified, single-source-of-truth evaluation function (`evaluate_regional_health()` in `dashboard/config.py`).
+
+```mermaid
+flowchart TD
+    IN["Regional Telemetry Input (f_meas, baseline_candidate)"] --> V1{"1. Physical Validity Check<br/>10.0 MHz <= f <= 800.0 MHz & Finite"}
+    V1 -- No / Missing --> S_INV["State: Degraded<br/>Severity: PHYSICALLY_INVALID<br/>Reason: Non-numeric / Out-of-bounds"]
+    V1 -- Yes --> B1["2. Validate Baseline<br/>validate_regional_baseline()"]
+    
+    B1 --> B2{"Baseline Healthy?<br/>b_val >= Warning Bound"}
+    B2 -- No --> B_FALL["Fallback: Factory Nominal<br/>(e.g., 435.8 MHz for R2)"]
+    B2 -- Yes --> B_KEEP["Accept Calibrated Baseline"]
+    
+    B_FALL --> CRIT{"3. Hard Critical Limit Check<br/>f_meas <= Critical Bound (411.8 MHz)<br/>or f_meas >= 460.0 MHz"}
+    B_KEEP --> CRIT
+    
+    CRIT -- Violated --> S_CRIT["State: Degraded<br/>Severity: CRITICAL<br/>Reason: Below Critical Boundary<br/>(Hard Engineering Override)"]
+    CRIT -- Passed --> WARN{"4. Hard Warning Limit Check<br/>f_meas <= Warning Bound (422.7 MHz)<br/>or f_meas >= 447.0 MHz"}
+    
+    WARN -- Violated --> S_WARN["State: Warning<br/>Severity: WARNING<br/>Reason: Within Warning Margin"]
+    WARN -- Passed --> DRIFT{"5. Baseline Drift Analysis<br/>Drift % = (f_meas - f_base) / f_base"}
+    
+    DRIFT -- "Drift <= -5.5%" --> S_DCRIT["State: Degraded<br/>Severity: CRITICAL (Drift)"]
+    DRIFT -- "Drift <= -3.0%" --> S_DWARN["State: Warning<br/>Severity: WARNING (Drift)"]
+    DRIFT -- "Drift > -3.0%" --> S_HLT["State: Healthy<br/>Severity: NORMAL<br/>Nominal Timing Propagation"]
+```
+
+#### Canonical Evaluation Precedence Order:
+1. **Input Validity & Physical Sensor Limits:** Non-numeric, `None`, non-finite (`NaN`/`Inf`), or unphysical frequencies ($< 10\text{ MHz}$ or $> 800\text{ MHz}$) are immediately flagged as `PHYSICALLY_INVALID` with `Degraded` health state. Invalid data is **never silently classified as Healthy**.
+2. **Validated Baseline Selection:** The candidate baseline is sanitized via `validate_regional_baseline()`. Unhealthy or degraded samples cannot establish a healthy reference benchmark.
+3. **Hard Engineering Critical Limits (Absolute Precedence):** If the valid measured frequency drops below the hard critical boundary (e.g., $f \le 411.8\text{ MHz}$ for R2), the region is classified as `Degraded` with maximum severity. **A small baseline drift can never override a hard critical limit violation.**
+4. **Hard Engineering Warning Limits:** Frequencies entering the margin between warning and critical boundaries (e.g., $411.8\text{ MHz} < f \le 422.7\text{ MHz}$) are classified as `Warning`.
+5. **Baseline Drift Analysis:** If absolute boundaries pass, relative timing degradation ($\Delta f_{\%}$) is evaluated against configured percentage drop limits ($-3.0\%$ for Warning, $-5.5\%$ for Degraded).
+
+---
+
+### 10.2 Distinction Between Factory Nominal and Calibrated Baseline
+
+The system explicitly distinguishes between two frequency reference semantics:
+
+| Property | Factory Configured Nominal Frequency ($f_{\text{nom}}$) | Board-Calibrated Baseline Frequency ($f_{\text{base}}$) |
+| :--- | :--- | :--- |
+| **Origin** | Authoritative datasheet and post-implementation timing closure benchmarks in Vivado for 28nm Artix-7 fabric. | Live 5-sample moving average captured at system initialization during verified healthy operation. |
+| **Values (Basys 3)** | R1: $436.3\text{ MHz}$, R2: $435.8\text{ MHz}$, R3: $436.1\text{ MHz}$, R4: $435.9\text{ MHz}$. | Board-specific silicon variation ($\pm 1.5\%$ across dies). |
+| **Role** | Canonical reference point for operating boundaries, warning limits ($f_{\text{nom}} \times 0.97$), and critical limits ($f_{\text{nom}} \times 0.945$). | Baseline for calculating localized relative drift ($\Delta f_{\%}, \Delta \tau_{\%}$). |
+| **Validation Invariant** | Fixed in `REGIONAL_CONFIG`. | Must be validated by `validate_regional_baseline()`: rejected and defaulted to $f_{\text{nom}}$ if non-numeric, unphysical, or $< f_{\text{warning}}$ ($422.7\text{ MHz}$ for R2). |
+
+#### Why Unhealthy Telemetry Cannot Establish a Baseline:
+If a damaged or degraded FPGA board powers on with an oscillator running at $322.2\text{ MHz}$ (already experiencing severe degradation), establishing $322.2\text{ MHz}$ as the baseline would cause subsequent $322.1\text{ MHz}$ measurements to register as $\Delta f_{\%} = -0.03\%$. Without baseline validation and hard-limit precedence, drift-only logic would report the failing quadrant as "Healthy". Under our architecture:
+- `validate_regional_baseline("R2", 322.20)` rejects the reading because $322.2\text{ MHz} < 422.7\text{ MHz}$ (Warning limit).
+- The baseline safely falls back to factory nominal ($435.8\text{ MHz}$).
+- The evaluated status is flagged as `Degraded` with reason: `Below critical boundary (322.1 <= 411.8 MHz)`.
+
+---
+
+### 10.3 Engineering Safety Layer vs. Random Forest ML Model
+
+The dashboard combines predictive machine learning with deterministic safety overrides:
+
+```mermaid
+graph TD
+    TELEMETRY[Validated Sensor Telemetry] --> ML[Random Forest Classifier<br/>200 Trees]
+    TELEMETRY --> SAFETY[Deterministic Safety Layer<br/>evaluate_engineering_limits]
+    
+    ML --> P_ML[ML Prediction: State + Confidence<br/>e.g., Warning @ 48.0%]
+    SAFETY --> P_SAFE[Safety Assessment: State + Override<br/>e.g., Degraded due to R2 Critical Limit]
+    
+    P_ML --> ARBITER{Health Arbiter}
+    P_SAFE --> ARBITER
+    
+    ARBITER -->|Hard Limit Violated| FINAL_OVR["Final Health: DEGRADED<br/>Safety Override Active<br/>Reason: R2 below critical boundary (322.1 <= 411.8 MHz)"]
+    ARBITER -->|Within Envelope| FINAL_ML["Final Health: Follows ML Prediction<br/>No Safety Override"]
+```
+
+#### Why ML and Engineering Assessment May Differ:
+- **Statistical Model Generalization:** The Random Forest model evaluates statistical patterns across a 16-dimensional feature vector. At operating boundaries or during novel degradation patterns, ML confidence may be low (e.g., Warning at $48.0\%$).
+- **Mission-Critical Determinism:** Mission-critical aerospace and industrial systems cannot risk false negatives from machine learning models when physical parameters violate known silicon operating bounds.
+- **Fail-Safe Override Rule:** Whenever `evaluate_engineering_limits()` detects a hard limit violation (e.g., Core voltage droop $< 0.950\text{V}$, Die temperature $> 85.0\text{°C}$, or RO frequency $< 411.8\text{ MHz}$), the engineering assessment deterministically overrides the ML prediction to `Degraded`.
+- **UI Transparency:** The UI preserves and displays both the raw ML prediction with confidence and the final engineering assessment with the explicit override reason.
+
+---
+
+### 10.4 Telemetry Handling, Provenance & Floorplan Disclaimers
+
+1. **Source Provenance Tracking:**
+   - Regional telemetry packets may report true regional readings (`[MEASURED]`) or fall back to global telemetry when legacy single-oscillator UART packets are received (`[DERIVED_GLOBAL]`).
+   - Every quadrant tile explicitly renders its data provenance badge to maintain scientific integrity.
+2. **Missing Telemetry Isolation:**
+   - Missing regional data does not cause dashboard crashes or silent fallbacks to "Healthy". Missing keys produce explicit `PHYSICALLY_INVALID` status cards with yellow/red warning indicators.
+3. **Pblock Floorplan Physical Disclaimer:**
+   - While regional coordinates (`CLOCKREGION_X0Y2`, etc.) correspond to actual physical Pblock constraints in the Vivado implementation design, the UI clearly notes that the 2×2 card arrangement is a logical quadrant representation and does not replace full Vivado Device View spatial thermal/IR analysis.
+
+---
+
+## 11. Research & Engineering Conclusion
+
+The **AI-Assisted FPGA Health Monitoring & Predictive Health Management** platform bridges on-chip silicon physical telemetry with modern machine learning and agentic diagnostic reasoning. By directly coupling Ring Oscillator physical propagation delay formulations ($\tau = \frac{1000}{2 \cdot N \cdot f}$) with a 200-tree Random Forest classifier, a deterministic engineering safety layer, and a LangGraph diagnostic agent, the system provides real-time health classification, quantitative drift tracking, and actionable life-extension guidance for mission-critical FPGA deployments.
+
