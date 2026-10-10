@@ -783,26 +783,26 @@ class TestSingleSourceROTimingAndFourRegion(unittest.TestCase):
             "RO_Frequency": 435.0,
             "RO_Delay_ns": round(100.0 / 435.0, 4),
             "Error_Rate": 0.00000,
-            "RO_R1": 435.0,
+            "RO_R1": 410.0,  # Degradation in R1
             "RO_R2": 436.0,
-            "RO_R3": 410.0,  # Severe regional degradation in Southwest quadrant
+            "RO_R3": 410.0,  # Degradation in R3 (>= 2 pblocks degraded triggers quorum)
             "RO_R4": 436.0,
         }
         assessment = evaluate_engineering_limits(telemetry)
         self.assertTrue(assessment["has_critical"])
         self.assertEqual(assessment["max_severity"], LimitSeverity.CRITICAL)
-        self.assertEqual(assessment["worst_region"], "R3")
-        self.assertTrue(any("Region R3" in r for r in assessment["override_reasons"]))
+        self.assertTrue(assessment["quorum_triggered"])
+        self.assertTrue(any("Multi-pblock" in r or "R1" in r or "R3" in r for r in assessment["override_reasons"]))
 
         final_res = determine_final_health("Healthy", 0.99, assessment)
         self.assertTrue(final_res["override_applied"])
         self.assertEqual(final_res["final_health"], "Degraded")
-        self.assertIn("R3", final_res["override_reasons"][0])
 
     def test_regional_baseline_validation_and_unhealthy_baseline_protection(self):
         """
         Confirms that passing an unhealthy regional baseline (e.g. 322.2 MHz for R2)
-        does not poison the engineering assessment or hide a critical R2 reading.
+        does not poison the engineering assessment or hide a critical R2 reading,
+        while overall status follows multi-pblock quorum policy.
         """
         telemetry = {
             "Temperature": 35.0,
@@ -813,7 +813,7 @@ class TestSingleSourceROTimingAndFourRegion(unittest.TestCase):
             "RO_Delay_ns": round(100.0 / 435.0, 4),
             "Error_Rate": 0.00000,
             "RO_R1": 436.3,
-            "RO_R2": 322.1,  # Critical limit breached
+            "RO_R2": 322.1,  # Critical limit breached in R2
             "RO_R3": 436.1,
             "RO_R4": 435.9,
         }
@@ -824,11 +824,21 @@ class TestSingleSourceROTimingAndFourRegion(unittest.TestCase):
             "RO_R4": 435.9
         }
         assessment = evaluate_engineering_limits(telemetry, regional_baselines=unhealthy_baselines)
-        self.assertEqual(assessment.max_severity, LimitSeverity.CRITICAL)
-        self.assertEqual(assessment.worst_region, "R2")
-        self.assertTrue(assessment.has_hard_violations)
+        # R2 itself is evaluated as Critical despite erroneous baseline
+        self.assertEqual(assessment.regional_evaluations["R2"]["severity"], LimitSeverity.CRITICAL)
+        self.assertEqual(assessment.degraded_pblocks, ["R2"])
+        # Under quorum policy (< 2 degraded pblocks), overall status is NORMAL
+        self.assertEqual(assessment.max_severity, LimitSeverity.NORMAL)
 
-        final_res = determine_final_health("Warning", 0.48, assessment)
+        # When 2 or more pblocks degrade, quorum triggers overall Degraded status
+        telemetry_2deg = telemetry.copy()
+        telemetry_2deg["RO_R1"] = 405.0  # Second degraded pblock
+        assessment_2deg = evaluate_engineering_limits(telemetry_2deg, regional_baselines=unhealthy_baselines)
+        self.assertEqual(assessment_2deg.max_severity, LimitSeverity.CRITICAL)
+        self.assertTrue(assessment_2deg.has_hard_violations)
+        self.assertTrue(assessment_2deg.quorum_triggered)
+
+        final_res = determine_final_health("Warning", 0.48, assessment_2deg)
         self.assertEqual(final_res["final_health"], "Degraded")
         self.assertTrue(final_res["override_applied"])
 

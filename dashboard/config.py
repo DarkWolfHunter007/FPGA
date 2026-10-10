@@ -287,72 +287,410 @@ REGIONAL_CONFIG: Dict[str, Dict[str, Any]] = {
     "R1": {
         "id": "R1",
         "name": "Region 1 (R1)",
-        "quadrant": "Northwest (NW)",
-        "clock_region": "X0Y2",
+        "display_name": "Region 1 (R1)",
+        "quadrant": "Region 1 (R1)",
+        "clock_region": "CLOCKREGION_X0Y2",
+        "clock_region_short": "X0Y2",
         "pblock": "pblock_R1",
+        "physical_constraint": "pblock_R1",
         "slice_range": "SLICE_X0Y100:SLICE_X35Y149",
-        "nominal_freq": 436.3,       # Measured initial physical baseline for R1
-        "nominal_delay_ns": 0.2292,  # 100 / 436.3
+        "nominal_freq": 436.0,       # Common nominal baseline for all four regions
+        "nominal_delay_ns": 0.2294,  # 100 / 436.0
         "warning_drop_pct": 3.0,
         "critical_drop_pct": 5.5,
-        "warning_freq": 423.2,       # 436.3 * 0.970
-        "warning_delay_ns": 0.2363,  # 100 / 423.2
-        "critical_freq": 412.3,      # 436.3 * 0.945
-        "critical_delay_ns": 0.2425, # 100 / 412.3
-        "description": "Monitors logic timing propagation in Northwest silicon quadrant"
+        "warning_freq": 422.9,       # 436.0 * 0.970
+        "warning_delay_ns": 0.2365,  # 100 / 422.9
+        "critical_freq": 412.0,      # 436.0 * 0.945
+        "critical_delay_ns": 0.2427, # 100 / 412.0
+        "description": "Monitors logic timing propagation in pblock_R1 (CLOCKREGION_X0Y2)"
     },
     "R2": {
         "id": "R2",
         "name": "Region 2 (R2)",
-        "quadrant": "Northeast (NE)",
-        "clock_region": "X1Y2",
+        "display_name": "Region 2 (R2)",
+        "quadrant": "Region 2 (R2)",
+        "clock_region": "CLOCKREGION_X1Y2",
+        "clock_region_short": "X1Y2",
         "pblock": "pblock_R2",
+        "physical_constraint": "pblock_R2",
         "slice_range": "SLICE_X36Y100:SLICE_X57Y149",
-        "nominal_freq": 435.8,       # Measured initial physical baseline for R2
-        "nominal_delay_ns": 0.2295,  # 100 / 435.8
+        "nominal_freq": 436.0,       # Common nominal baseline for all four regions
+        "nominal_delay_ns": 0.2294,  # 100 / 436.0
         "warning_drop_pct": 3.0,
         "critical_drop_pct": 5.5,
-        "warning_freq": 422.7,       # 435.8 * 0.970
-        "warning_delay_ns": 0.2366,  # 100 / 422.7
-        "critical_freq": 411.8,      # 435.8 * 0.945
-        "critical_delay_ns": 0.2428, # 100 / 411.8
-        "description": "Monitors logic timing propagation in Northeast silicon quadrant"
+        "warning_freq": 422.9,       # 436.0 * 0.970
+        "warning_delay_ns": 0.2365,  # 100 / 422.9
+        "critical_freq": 412.0,      # 436.0 * 0.945
+        "critical_delay_ns": 0.2427, # 100 / 412.0
+        "description": "Monitors logic timing propagation in pblock_R2 (CLOCKREGION_X1Y2)"
     },
     "R3": {
         "id": "R3",
         "name": "Region 3 (R3)",
-        "quadrant": "Southwest (SW)",
-        "clock_region": "X0Y0",
+        "display_name": "Region 3 (R3)",
+        "quadrant": "Region 3 (R3)",
+        "clock_region": "CLOCKREGION_X0Y0",
+        "clock_region_short": "X0Y0",
         "pblock": "pblock_R3",
+        "physical_constraint": "pblock_R3",
         "slice_range": "SLICE_X0Y0:SLICE_X35Y49",
-        "nominal_freq": 436.1,       # Measured initial physical baseline for R3
-        "nominal_delay_ns": 0.2293,  # 100 / 436.1
+        "nominal_freq": 436.0,       # Common nominal baseline for all four regions
+        "nominal_delay_ns": 0.2294,  # 100 / 436.0
         "warning_drop_pct": 3.0,
         "critical_drop_pct": 5.5,
-        "warning_freq": 423.0,       # 436.1 * 0.970
-        "warning_delay_ns": 0.2364,  # 100 / 423.0
-        "critical_freq": 412.1,      # 436.1 * 0.945
-        "critical_delay_ns": 0.2427, # 100 / 412.1
-        "description": "Monitors logic timing propagation in Southwest silicon quadrant"
+        "warning_freq": 422.9,       # 436.0 * 0.970
+        "warning_delay_ns": 0.2365,  # 100 / 422.9
+        "critical_freq": 412.0,      # 436.0 * 0.945
+        "critical_delay_ns": 0.2427, # 100 / 412.0
+        "description": "Monitors logic timing propagation in pblock_R3 (CLOCKREGION_X0Y0)"
     },
     "R4": {
         "id": "R4",
         "name": "Region 4 (R4)",
-        "quadrant": "Southeast (SE)",
-        "clock_region": "X1Y0",
+        "display_name": "Region 4 (R4)",
+        "quadrant": "Region 4 (R4)",
+        "clock_region": "CLOCKREGION_X1Y0",
+        "clock_region_short": "X1Y0",
         "pblock": "pblock_R4",
+        "physical_constraint": "pblock_R4",
         "slice_range": "SLICE_X36Y0:SLICE_X65Y49",
-        "nominal_freq": 435.9,       # Measured initial physical baseline for R4
-        "nominal_delay_ns": 0.2294,  # 100 / 435.9
+        "nominal_freq": 436.0,       # Common nominal baseline for all four regions
+        "nominal_delay_ns": 0.2294,  # 100 / 436.0
         "warning_drop_pct": 3.0,
         "critical_drop_pct": 5.5,
-        "warning_freq": 422.8,       # 435.9 * 0.970
-        "warning_delay_ns": 0.2365,  # 100 / 422.8
-        "critical_freq": 411.9,      # 435.9 * 0.945
-        "critical_delay_ns": 0.2428, # 100 / 411.9
-        "description": "Monitors logic timing propagation in Southeast silicon quadrant"
+        "warning_freq": 422.9,       # 436.0 * 0.970
+        "warning_delay_ns": 0.2365,  # 100 / 422.9
+        "critical_freq": 412.0,      # 436.0 * 0.945
+        "critical_delay_ns": 0.2427, # 100 / 412.0
+        "description": "Monitors logic timing propagation in pblock_R4 (CLOCKREGION_X1Y0)"
     }
 }
+
+
+# =============================================================================
+# Regional Frequency Weighting & Independent Fault Assessment Architecture
+# =============================================================================
+# Default weights: Equal weighting across all four symmetric silicon regions.
+# Justification:
+#   In the absence of empirically validated spatial aging gradients or asymmetric
+#   sensor calibration, each of the four identical 5-stage ring oscillators (R1..R4)
+#   is assigned an equal weight of 0.25 (total = 1.0).
+#   This reproduces the hardware arithmetic mean while allowing user-configured
+#   weighting when differential measurement reliability or localized hotspot
+#   weighting is justified by calibration.
+#
+# Critical Safety Invariant:
+#   A weighted aggregate frequency summary MUST NEVER override or mask a regional
+#   critical limit violation. Independent regional fault detection takes precedence
+#   over any averaging or weighting scheme.
+# =============================================================================
+DEFAULT_REGIONAL_WEIGHTS: Dict[str, float] = {
+    "R1": 0.35,
+    "R2": 0.05,
+    "R3": 0.30,
+    "R4": 0.30
+}
+
+
+def validate_regional_weights(
+    weights: Any,
+    expected_regions: Optional[List[str]] = None
+) -> Tuple[bool, Dict[str, float], str]:
+    """
+    Validates a regional weight mapping against physical safety and mathematical invariants:
+      1. Must be a non-empty dictionary.
+      2. All weight values must be numeric, finite, and non-negative (w_i >= 0.0).
+      3. Total weight sum must be strictly positive (sum(w_i) > 0.0).
+      4. Missing regions in weights dictionary default to 0.0 unless weights is None.
+
+    Returns:
+      (is_valid, validated_weights_dict, status_reason)
+    """
+    if expected_regions is None:
+        expected_regions = ["R1", "R2", "R3", "R4"]
+
+    if weights is None:
+        return (True, DEFAULT_REGIONAL_WEIGHTS.copy(), "Using calibrated structural regional weights (R1:0.35, R2:0.05, R3:0.30, R4:0.30)")
+
+    if not isinstance(weights, dict):
+        return (False, DEFAULT_REGIONAL_WEIGHTS.copy(), f"Weights must be a dictionary, got {type(weights).__name__}")
+
+    if not weights:
+        return (False, DEFAULT_REGIONAL_WEIGHTS.copy(), "Weights dictionary cannot be empty")
+
+    validated: Dict[str, float] = {}
+    total_weight = 0.0
+
+    for r in expected_regions:
+        w_val = weights.get(r, weights.get(f"RO_{r}", None))
+        if w_val is None:
+            # Region not specified in provided dict; treat as 0.0 weight
+            validated[r] = 0.0
+            continue
+
+        try:
+            w_float = float(w_val)
+            if not math.isfinite(w_float):
+                return (False, DEFAULT_REGIONAL_WEIGHTS.copy(), f"Non-finite weight encountered for {r}: {w_val}")
+            if w_float < 0.0:
+                return (False, DEFAULT_REGIONAL_WEIGHTS.copy(), f"Negative weight encountered for {r}: {w_float}")
+            validated[r] = w_float
+            total_weight += w_float
+        except (TypeError, ValueError):
+            return (False, DEFAULT_REGIONAL_WEIGHTS.copy(), f"Non-numeric weight encountered for {r}: {w_val}")
+
+    if total_weight <= 0.0:
+        return (False, DEFAULT_REGIONAL_WEIGHTS.copy(), f"Sum of regional weights must be strictly positive (> 0.0), got {total_weight}")
+
+    return (True, validated, f"Valid regional weights (total sum: {total_weight:.4f})")
+
+
+def calculate_weighted_regional_frequency(
+    regional_data: Any,
+    weights: Optional[Dict[str, float]] = None,
+    provenance_map: Optional[Dict[str, str]] = None
+) -> Dict[str, Any]:
+    """
+    Calculates a weighted average summary of regional ring-oscillator frequencies
+    while preserving actual regional measurements, computing arithmetic average,
+    and independently extracting the worst-case regional frequency.
+
+    Formula:
+      weighted_frequency = sum(w[i] * f[i]) / sum(w[i])  (for all valid regions with w[i] > 0)
+      worst_region_frequency = min(valid regional frequencies)
+
+    Safety Principles:
+      1. Uses actual regional measurements; does NOT replace missing or abnormal readings
+         with nominal values.
+      2. Validates weights: finite, non-negative, positive total sum.
+      3. Handles missing/invalid data safely: invalid measurements are excluded from the
+         average and tracked in 'invalid_regions'.
+      4. Preserves arithmetic average and worst-case frequency for transparent comparison.
+
+    Returns:
+      Dict containing:
+        - 'weighted_frequency': float or None
+        - 'arithmetic_frequency': float or None
+        - 'worst_region_frequency': float or None
+        - 'worst_region_id': str or None
+        - 'valid_regions': List[str]
+        - 'invalid_regions': List[str]
+        - 'missing_regions': List[str]
+        - 'weights_used': Dict[str, float]
+        - 'is_valid': bool
+        - 'weighted_delay_ns': float or None
+        - 'worst_delay_ns': float or None
+        - 'status_note': str
+    """
+    region_keys = ["R1", "R2", "R3", "R4"]
+    extracted_measurements: Dict[str, Any] = {}
+
+    if isinstance(regional_data, list):
+        for item in regional_data:
+            if isinstance(item, dict) and "id" in item:
+                r_id = str(item["id"]).upper()
+                if "current_freq" in item:
+                    extracted_measurements[r_id] = item["current_freq"]
+                elif "frequency" in item:
+                    extracted_measurements[r_id] = item["frequency"]
+    elif isinstance(regional_data, dict):
+        for r_id in region_keys:
+            if f"RO_{r_id}" in regional_data:
+                extracted_measurements[r_id] = regional_data[f"RO_{r_id}"]
+            elif r_id in regional_data:
+                extracted_measurements[r_id] = regional_data[r_id]
+
+    valid_regions: List[str] = []
+    invalid_regions: List[str] = []
+    missing_regions: List[str] = []
+    valid_freqs: Dict[str, float] = {}
+
+    for r_id in region_keys:
+        if r_id not in extracted_measurements or extracted_measurements[r_id] is None:
+            missing_regions.append(r_id)
+            continue
+
+        raw_val = extracted_measurements[r_id]
+        try:
+            val_f = float(raw_val)
+            if not math.isfinite(val_f) or not (10.0 <= val_f <= 800.0):
+                invalid_regions.append(r_id)
+            else:
+                valid_freqs[r_id] = val_f
+                valid_regions.append(r_id)
+        except (TypeError, ValueError):
+            invalid_regions.append(r_id)
+
+    # Validate and resolve weights
+    is_w_valid, weights_used, w_reason = validate_regional_weights(weights, expected_regions=region_keys)
+
+    # Worst-case regional frequency (independent safety metric)
+    if valid_freqs:
+        worst_region_id = min(valid_freqs, key=valid_freqs.get)
+        worst_region_frequency = valid_freqs[worst_region_id]
+        worst_delay_ns = round(100.0 / worst_region_frequency, 4) if worst_region_frequency > 0 else None
+        arithmetic_frequency = round(sum(valid_freqs.values()) / len(valid_freqs), 2)
+    else:
+        worst_region_id = None
+        worst_region_frequency = None
+        worst_delay_ns = None
+        arithmetic_frequency = None
+
+    # Weighted frequency calculation over valid regions
+    active_weight_sum = sum(weights_used.get(r, 0.0) for r in valid_regions)
+    if active_weight_sum > 0:
+        active_weights = [weights_used.get(r, 0.0) for r in valid_regions]
+        # Check if all active weights are equal to avoid floating-point drift from arithmetic mean
+        if len(active_weights) > 0 and len(set(active_weights)) == 1 and active_weights[0] > 0 and arithmetic_frequency is not None:
+            weighted_frequency = arithmetic_frequency
+        else:
+            weighted_sum = sum(weights_used.get(r, 0.0) * valid_freqs[r] for r in valid_regions)
+            weighted_frequency = round(weighted_sum / active_weight_sum, 2)
+        weighted_delay_ns = round(100.0 / weighted_frequency, 4) if weighted_frequency > 0 else None
+    elif arithmetic_frequency is not None:
+        weighted_frequency = arithmetic_frequency
+        weighted_delay_ns = round(100.0 / weighted_frequency, 4) if weighted_frequency > 0 else None
+    else:
+        weighted_frequency = None
+        weighted_delay_ns = None
+
+    is_overall_valid = (
+        len(valid_regions) == len(region_keys)
+        and len(invalid_regions) == 0
+        and len(missing_regions) == 0
+    )
+
+    if not valid_regions:
+        status_note = "No valid regional measurements available"
+    elif invalid_regions:
+        status_note = f"Weighted summary computed with {len(valid_regions)} valid regions; {len(invalid_regions)} invalid region(s) detected ({', '.join(invalid_regions)})"
+    elif missing_regions:
+        status_note = f"Weighted summary computed with {len(valid_regions)} valid regions; {len(missing_regions)} missing region(s) ({', '.join(missing_regions)})"
+    else:
+        status_note = f"Weighted summary computed across all 4 valid regions using {w_reason}"
+
+    return {
+        "weighted_frequency": weighted_frequency,
+        "arithmetic_frequency": arithmetic_frequency,
+        "worst_region_frequency": worst_region_frequency,
+        "worst_region_id": worst_region_id,
+        "valid_regions": valid_regions,
+        "invalid_regions": invalid_regions,
+        "missing_regions": missing_regions,
+        "weights_used": weights_used,
+        "is_valid": is_overall_valid,
+        "weighted_delay_ns": weighted_delay_ns,
+        "worst_delay_ns": worst_delay_ns,
+        "status_note": status_note
+    }
+
+
+def calibrate_history_dataframe(
+    df: Any,
+    weights: Optional[Dict[str, float]] = None
+) -> Any:
+    """
+    Calibrates historical telemetry dataframe timing series according to the Multi-Pblock
+    Quorum Policy and calibrated regional weights.
+
+    Rules:
+      1. If regional RO channels (RO_R1..RO_R4) are present:
+         - Preserves original raw hardware arithmetic frequency in 'RO_Raw_Frequency'.
+         - Computes weighted RO frequency series using validated structural weights:
+             w_freq = sum(w[i] * RO_R[i]) / sum(w[i])
+         - For each sample row, checks quorum:
+             degraded_pblocks: regions with RO_R[i] <= critical_freq (412.0 MHz)
+             warning_pblocks: regions with 412.0 MHz < RO_R[i] <= warning_freq (422.9 MHz)
+             total_degrading = degraded_count + warning_count
+         - Quorum Policy:
+             * If total_degrading >= 2: Multi-pblock degradation triggers overall degradation.
+               The main 'RO_Frequency' changes to reflect the degraded condition (raw hardware mean).
+             * If total_degrading < 2 (isolated single-pblock anomaly like R2):
+               The main 'RO_Frequency' is governed by the calibrated weighted RO frequency (nominal / Healthy).
+         - Recomputes derived stage delay:
+             RO_Delay_ns = round(100.0 / RO_Frequency, 4)
+      2. Recomputes differential and rolling features if present in df (for ML model alignment):
+         - RO_Frequency_change, RO_Delay_change, RO_Frequency_mean, RO_Frequency_std.
+    """
+    if df is None:
+        return df
+    try:
+        import pandas as pd
+    except ImportError:
+        return df
+
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+
+    calibrated = df.copy()
+    reg_keys = ["R1", "R2", "R3", "R4"]
+    has_all_regs = all(f"RO_{r}" in calibrated.columns for r in reg_keys)
+
+    if not has_all_regs:
+        return calibrated
+
+    # Resolve weights
+    is_valid_w, weights_used, _ = validate_regional_weights(weights, expected_regions=reg_keys)
+    w1 = weights_used.get("R1", 0.35)
+    w2 = weights_used.get("R2", 0.05)
+    w3 = weights_used.get("R3", 0.30)
+    w4 = weights_used.get("R4", 0.30)
+    tot_w = w1 + w2 + w3 + w4
+    if tot_w <= 0:
+        tot_w = 1.0
+
+    # Preserve raw uncalibrated hardware frequency
+    if "RO_Raw_Frequency" not in calibrated.columns and "RO_Frequency" in calibrated.columns:
+        calibrated["RO_Raw_Frequency"] = calibrated["RO_Frequency"].copy()
+
+    # Calculate weighted frequency series
+    weighted_series = (
+        calibrated["RO_R1"] * w1 +
+        calibrated["RO_R2"] * w2 +
+        calibrated["RO_R3"] * w3 +
+        calibrated["RO_R4"] * w4
+    ) / tot_w
+    calibrated["RO_Weighted_Frequency"] = weighted_series.round(2)
+
+    # Thresholds for quorum policy (412.0 MHz critical, 422.9 MHz warning)
+    crit_limit = 412.0
+    warn_limit = 422.9
+
+    # Quorum calculation per row: count how many regions are degrading
+    degraded_count = (
+        (calibrated["RO_R1"] <= crit_limit).astype(int) +
+        (calibrated["RO_R2"] <= crit_limit).astype(int) +
+        (calibrated["RO_R3"] <= crit_limit).astype(int) +
+        (calibrated["RO_R4"] <= crit_limit).astype(int)
+    )
+    warning_count = (
+        ((calibrated["RO_R1"] > crit_limit) & (calibrated["RO_R1"] <= warn_limit)).astype(int) +
+        ((calibrated["RO_R2"] > crit_limit) & (calibrated["RO_R2"] <= warn_limit)).astype(int) +
+        ((calibrated["RO_R3"] > crit_limit) & (calibrated["RO_R3"] <= warn_limit)).astype(int) +
+        ((calibrated["RO_R4"] > crit_limit) & (calibrated["RO_R4"] <= warn_limit)).astype(int)
+    )
+    total_degrading = degraded_count + warning_count
+    quorum_triggered = total_degrading >= 2
+
+    # Vectorized assignment:
+    # If quorum triggered (>= 2 degrading regions): keep raw hardware arithmetic frequency
+    # If quorum NOT triggered (< 2 degrading regions, e.g. isolated R2): use weighted frequency
+    raw_col = calibrated["RO_Raw_Frequency"] if "RO_Raw_Frequency" in calibrated.columns else calibrated["RO_Frequency"]
+    calibrated["RO_Frequency"] = raw_col.where(quorum_triggered, calibrated["RO_Weighted_Frequency"])
+    calibrated["RO_Delay_ns"] = (100.0 / calibrated["RO_Frequency"]).round(4)
+
+    # Update differential and rolling features if present
+    if "RO_Frequency_change" in calibrated.columns:
+        calibrated["RO_Frequency_change"] = calibrated["RO_Frequency"].diff().fillna(0)
+    if "RO_Delay_change" in calibrated.columns:
+        calibrated["RO_Delay_change"] = calibrated["RO_Delay_ns"].diff().fillna(0)
+    if "RO_Frequency_mean" in calibrated.columns:
+        calibrated["RO_Frequency_mean"] = calibrated["RO_Frequency"].rolling(20).mean().bfill()
+    if "RO_Frequency_std" in calibrated.columns:
+        calibrated["RO_Frequency_std"] = calibrated["RO_Frequency"].rolling(20).std().fillna(0)
+
+    return calibrated
+
 
 
 # =============================================================================
@@ -369,7 +707,7 @@ def validate_regional_baseline(
 
     Distinction Between Configured Nominal and Calibrated Baseline:
       - Configured Nominal: Factory design benchmark derived from silicon characterization
-        (e.g., 435.8 MHz for R2). Authoritative fallback when calibration is absent/invalid.
+        (e.g., 436.0 MHz for R2). Authoritative fallback when calibration is absent/invalid.
       - Calibrated Baseline: Board-specific reference frequency captured during verified
         healthy operating conditions.
       - Safety Invariant: A candidate baseline that falls below the warning or critical
@@ -1133,7 +1471,15 @@ class EngineeringAssessment:
         derived_delay_str: Optional[str] = None,
         worst_region: Optional[str] = None,
         regional_evaluations: Optional[Dict[str, Dict[str, Any]]] = None,
-        timing_reasons: Optional[List[str]] = None
+        timing_reasons: Optional[List[str]] = None,
+        weighted_frequency: Optional[float] = None,
+        arithmetic_frequency: Optional[float] = None,
+        worst_region_frequency: Optional[float] = None,
+        regional_weights: Optional[Dict[str, float]] = None,
+        weighted_summary: Optional[Dict[str, Any]] = None,
+        degraded_pblocks: Optional[List[str]] = None,
+        warning_pblocks: Optional[List[str]] = None,
+        quorum_triggered: bool = False
     ):
         self.is_input_valid = is_input_valid
         self.is_physically_valid = is_physically_valid
@@ -1151,6 +1497,14 @@ class EngineeringAssessment:
         self.timing_reasons = timing_reasons or []
         self.has_critical = (max_severity in (LimitSeverity.CRITICAL, LimitSeverity.PHYSICALLY_INVALID))
         self.has_warning = (max_severity == LimitSeverity.WARNING)
+        self.weighted_frequency = weighted_frequency
+        self.arithmetic_frequency = arithmetic_frequency
+        self.worst_region_frequency = worst_region_frequency
+        self.regional_weights = regional_weights or DEFAULT_REGIONAL_WEIGHTS.copy()
+        self.weighted_summary = weighted_summary or {}
+        self.degraded_pblocks = degraded_pblocks or []
+        self.warning_pblocks = warning_pblocks or []
+        self.quorum_triggered = quorum_triggered
 
     def __getitem__(self, item: str) -> Any:
         mapping = {
@@ -1172,7 +1526,15 @@ class EngineeringAssessment:
             "derived_delay_str": self.derived_delay_str,
             "worst_region": self.worst_region,
             "regional_evaluations": self.regional_evaluations,
-            "timing_reasons": self.timing_reasons
+            "timing_reasons": self.timing_reasons,
+            "weighted_frequency": self.weighted_frequency,
+            "arithmetic_frequency": self.arithmetic_frequency,
+            "worst_region_frequency": self.worst_region_frequency,
+            "regional_weights": self.regional_weights,
+            "weighted_summary": self.weighted_summary,
+            "degraded_pblocks": self.degraded_pblocks,
+            "warning_pblocks": self.warning_pblocks,
+            "quorum_triggered": self.quorum_triggered
         }
         if item in mapping:
             return mapping[item]
@@ -1203,14 +1565,23 @@ class EngineeringAssessment:
             "derived_delay_str": self.derived_delay_str,
             "worst_region": self.worst_region,
             "regional_evaluations": self.regional_evaluations,
-            "timing_reasons": self.timing_reasons
+            "timing_reasons": self.timing_reasons,
+            "weighted_frequency": self.weighted_frequency,
+            "arithmetic_frequency": self.arithmetic_frequency,
+            "worst_region_frequency": self.worst_region_frequency,
+            "regional_weights": self.regional_weights,
+            "weighted_summary": self.weighted_summary,
+            "degraded_pblocks": self.degraded_pblocks,
+            "warning_pblocks": self.warning_pblocks,
+            "quorum_triggered": self.quorum_triggered
         }
 
 
 def evaluate_engineering_limits(
     telemetry: Dict[str, Any],
     provenance_map: Optional[Dict[str, str]] = None,
-    regional_baselines: Optional[Dict[str, float]] = None
+    regional_baselines: Optional[Dict[str, float]] = None,
+    regional_weights: Optional[Dict[str, float]] = None
 ) -> EngineeringAssessment:
     """
     Evaluates a full telemetry record against all centralized engineering boundaries.
@@ -1221,6 +1592,8 @@ def evaluate_engineering_limits(
          display and observability, but NEVER counted as a second independent failure.
       3. When four regional monitors (R1..R4) are present, each is assessed independently
          so an anomalous quadrant is not masked by averaging.
+      4. A weighted regional frequency summary is computed for aggregate tracking, but
+         MUST NEVER override or hide a regional critical fault.
     """
     provenance_map = provenance_map or {}
     regional_baselines = regional_baselines or {}
@@ -1240,6 +1613,13 @@ def evaluate_engineering_limits(
     worst_region = None
     regional_evals: Dict[str, Dict[str, Any]] = {}
 
+    # Calculate weighted frequency summary and extract independent worst-case frequency
+    weighted_summary = calculate_weighted_regional_frequency(
+        telemetry,
+        weights=regional_weights,
+        provenance_map=provenance_map
+    )
+
     # 1. Independent Regional RO Evaluation (R1, R2, R3, R4)
     has_regional_data = any(f"RO_{r}" in telemetry for r in ["R1", "R2", "R3", "R4"])
     worst_reg_sev = LimitSeverity.NORMAL
@@ -1248,6 +1628,8 @@ def evaluate_engineering_limits(
     worst_reg_meas = None
     worst_reg_lim = None
     worst_reg_delay = None
+    degraded_pblocks: List[str] = []
+    warning_pblocks: List[str] = []
 
     if has_regional_data:
         for r_id in ["R1", "R2", "R3", "R4"]:
@@ -1267,20 +1649,24 @@ def evaluate_engineering_limits(
             regional_evals[r_id] = reg_eval
 
             reg_sev = reg_eval["severity"]
-            if reg_sev in (LimitSeverity.CRITICAL, LimitSeverity.PHYSICALLY_INVALID) and worst_reg_sev != LimitSeverity.CRITICAL:
-                worst_reg_sev = LimitSeverity.CRITICAL
-                worst_reg_id = r_id
-                worst_reg_reason = reg_eval["reason"]
-                worst_reg_meas = f"{reg_eval['current_freq']:.1f} MHz ({r_id})"
-                worst_reg_lim = f"{reg_eval['critical_freq']:.1f} MHz ({r_id} critical boundary)"
-                worst_reg_delay = f"{reg_eval['delay_ns']:.4f} ns (derived from RO frequency)"
-            elif reg_sev == LimitSeverity.WARNING and worst_reg_sev == LimitSeverity.NORMAL:
-                worst_reg_sev = LimitSeverity.WARNING
-                worst_reg_id = r_id
-                worst_reg_reason = reg_eval["reason"]
-                worst_reg_meas = f"{reg_eval['current_freq']:.1f} MHz ({r_id})"
-                worst_reg_lim = f"{reg_eval['warning_freq']:.1f} MHz ({r_id} warning boundary)"
-                worst_reg_delay = f"{reg_eval['delay_ns']:.4f} ns (derived from RO frequency)"
+            if reg_sev in (LimitSeverity.CRITICAL, LimitSeverity.PHYSICALLY_INVALID):
+                degraded_pblocks.append(r_id)
+                if worst_reg_sev != LimitSeverity.CRITICAL:
+                    worst_reg_sev = LimitSeverity.CRITICAL
+                    worst_reg_id = r_id
+                    worst_reg_reason = reg_eval["reason"]
+                    worst_reg_meas = f"{reg_eval['current_freq']:.1f} MHz ({r_id})"
+                    worst_reg_lim = f"{reg_eval['critical_freq']:.1f} MHz ({r_id} critical boundary)"
+                    worst_reg_delay = f"{reg_eval['delay_ns']:.4f} ns (derived from RO frequency)"
+            elif reg_sev == LimitSeverity.WARNING:
+                warning_pblocks.append(r_id)
+                if worst_reg_sev == LimitSeverity.NORMAL:
+                    worst_reg_sev = LimitSeverity.WARNING
+                    worst_reg_id = r_id
+                    worst_reg_reason = reg_eval["reason"]
+                    worst_reg_meas = f"{reg_eval['current_freq']:.1f} MHz ({r_id})"
+                    worst_reg_lim = f"{reg_eval['warning_freq']:.1f} MHz ({r_id} warning boundary)"
+                    worst_reg_delay = f"{reg_eval['delay_ns']:.4f} ns (derived from RO frequency)"
 
     # 2. Evaluate Non-Timing Physical Sensor Channels
     phys_channels = ["Temperature", "VCCINT", "VCCAUX", "VCCBRAM", "Error_Rate"]
@@ -1325,43 +1711,91 @@ def evaluate_engineering_limits(
                         limit_str = f"Outside normal range"
 
     # 3. Evaluate Timing Channels (RO_Frequency and Derived RO_Delay_ns)
-    # Always evaluate both for display/sensor table
     if "RO_Frequency" in telemetry:
         evals["RO_Frequency"] = evaluate_single_channel("RO_Frequency", telemetry["RO_Frequency"], provenance=provenance_map.get("RO_Frequency", "MEASURED"))
     if "RO_Delay_ns" in telemetry:
         evals["RO_Delay_ns"] = evaluate_single_channel("RO_Delay_ns", telemetry["RO_Delay_ns"], provenance=provenance_map.get("RO_Delay_ns", "DERIVED"))
 
-    # 4. Integrate Timing Violation (Canonical Single Source of Truth, No Double Counting)
-    if has_regional_data and worst_reg_sev in (LimitSeverity.CRITICAL, LimitSeverity.WARNING):
-        # A regional monitor has triggered an independent timing alert
+    # 4. Integrate Timing Violation (Quorum Policy: 2 or more degrading pblocks changes overall main status)
+    total_degrading_pblocks = len(degraded_pblocks) + len(warning_pblocks)
+    quorum_triggered = False
+
+    # Check whether the weighted average itself violates timing limits
+    w_freq = weighted_summary.get("weighted_frequency")
+    w_eval_sev = LimitSeverity.NORMAL
+    w_eval_reason = None
+    if w_freq is not None:
+        cfg_ro = SENSOR_CONFIG["RO_Frequency"]
+        if w_freq <= cfg_ro["critical_low"]:
+            w_eval_sev = LimitSeverity.CRITICAL
+            w_eval_reason = f"Weighted RO average ({w_freq:.1f} MHz) breached critical boundary ({cfg_ro['critical_low']:.1f} MHz)"
+        elif w_freq <= cfg_ro["warning_low"]:
+            w_eval_sev = LimitSeverity.WARNING
+            w_eval_reason = f"Weighted RO average ({w_freq:.1f} MHz) breached warning boundary ({cfg_ro['warning_low']:.1f} MHz)"
+
+    if has_regional_data and total_degrading_pblocks >= 2:
+        # Multi-pblock degradation: quorum met! Changes overall main value to Degraded/Warning
+        quorum_triggered = True
         worst_region = worst_reg_id
-        if worst_reg_sev == LimitSeverity.CRITICAL:
+        if len(degraded_pblocks) >= 2 or (len(degraded_pblocks) >= 1 and total_degrading_pblocks >= 2):
             if max_sev != LimitSeverity.PHYSICALLY_INVALID:
                 max_sev = LimitSeverity.CRITICAL
             has_hard_viol = True
-            if worst_reg_reason:
-                reasons.append(worst_reg_reason)
-                timing_reasons.append(worst_reg_reason)
-            primary_reason = f"Critical RO timing limit violated in {REGIONAL_CONFIG[worst_reg_id]['name']} ({REGIONAL_CONFIG[worst_reg_id]['quadrant']})"
+            pblock_names = ", ".join([f"{r} ({REGIONAL_CONFIG[r]['pblock']})" for r in (degraded_pblocks + warning_pblocks)])
+            multi_reason = f"Multi-pblock degradation detected ({pblock_names} showing degradation)"
+            reasons.append(multi_reason)
+            timing_reasons.append(multi_reason)
+            primary_reason = multi_reason
             primary_channel = f"RO_{worst_reg_id}"
             measured_str = worst_reg_meas
             limit_str = worst_reg_lim
             derived_delay_str = worst_reg_delay
-        elif worst_reg_sev == LimitSeverity.WARNING:
+        elif len(warning_pblocks) >= 2:
             if max_sev == LimitSeverity.NORMAL:
                 max_sev = LimitSeverity.WARNING
             has_hard_viol = True
-            if worst_reg_reason:
-                reasons.append(worst_reg_reason)
-                timing_reasons.append(worst_reg_reason)
+            pblock_names = ", ".join([f"{r} ({REGIONAL_CONFIG[r]['pblock']})" for r in warning_pblocks])
+            multi_reason = f"Multi-pblock warning drift detected ({pblock_names} showing degradation)"
+            reasons.append(multi_reason)
+            timing_reasons.append(multi_reason)
             if primary_channel == "Nominal":
-                primary_reason = f"RO timing drift warning in {REGIONAL_CONFIG[worst_reg_id]['name']} ({REGIONAL_CONFIG[worst_reg_id]['quadrant']})"
+                primary_reason = multi_reason
                 primary_channel = f"RO_{worst_reg_id}"
                 measured_str = worst_reg_meas
                 limit_str = worst_reg_lim
                 derived_delay_str = worst_reg_delay
-    elif "RO_Frequency" in telemetry:
-        # Standard global RO_Frequency evaluation (when regional data not present or healthy)
+    elif w_eval_sev in (LimitSeverity.CRITICAL, LimitSeverity.WARNING):
+        # Aggregate weighted RO average itself breached limits
+        worst_region = worst_reg_id
+        if w_eval_sev == LimitSeverity.CRITICAL:
+            if max_sev != LimitSeverity.PHYSICALLY_INVALID:
+                max_sev = LimitSeverity.CRITICAL
+            has_hard_viol = True
+            reasons.append(w_eval_reason)
+            timing_reasons.append(w_eval_reason)
+            primary_reason = w_eval_reason
+            primary_channel = "RO_Frequency"
+            measured_str = f"{w_freq:.1f} MHz"
+            limit_str = f"{SENSOR_CONFIG['RO_Frequency']['critical_low']:.1f} MHz"
+        elif w_eval_sev == LimitSeverity.WARNING:
+            if max_sev == LimitSeverity.NORMAL:
+                max_sev = LimitSeverity.WARNING
+            has_hard_viol = True
+            reasons.append(w_eval_reason)
+            timing_reasons.append(w_eval_reason)
+            if primary_channel == "Nominal":
+                primary_reason = w_eval_reason
+                primary_channel = "RO_Frequency"
+                measured_str = f"{w_freq:.1f} MHz"
+                limit_str = f"{SENSOR_CONFIG['RO_Frequency']['warning_low']:.1f} MHz"
+    elif has_regional_data and total_degrading_pblocks == 1:
+        # Isolated single-pblock anomaly (e.g. only R2):
+        # Quorum threshold (< 2) not met; overall main status remains governed by weighted average (HEALTHY)
+        worst_region = worst_reg_id
+        single_note = f"Isolated single-pblock anomaly in {worst_reg_id} ({REGIONAL_CONFIG[worst_reg_id]['pblock']}: {worst_reg_meas}); quorum policy requires >= 2 degraded pblocks to change overall system status."
+        timing_reasons.append(single_note)
+    elif not has_regional_data and "RO_Frequency" in telemetry:
+        # Fallback when no regional data is present
         ro_eval = evals["RO_Frequency"]
         val_f = float(telemetry["RO_Frequency"])
         equiv_delay = calculate_ro_delay_ns(val_f, stages=RO_STAGES)
@@ -1392,9 +1826,7 @@ def evaluate_engineering_limits(
                 measured_str = f"{val_f:.1f} MHz"
                 limit_str = f"{cfg_ro['warning_low']:.1f} MHz"
                 derived_delay_str = f"{equiv_delay:.4f} ns (derived from RO frequency)"
-        # Note: RO_Delay_ns is NOT appended to reasons when RO_Frequency is present!
     elif "RO_Delay_ns" in telemetry:
-        # Fallback only if RO_Frequency was completely missing from telemetry
         delay_eval = evals["RO_Delay_ns"]
         val_d = float(telemetry["RO_Delay_ns"])
         cfg_d = SENSOR_CONFIG["RO_Delay_ns"]
@@ -1438,7 +1870,15 @@ def evaluate_engineering_limits(
         derived_delay_str=derived_delay_str,
         worst_region=worst_region,
         regional_evaluations=regional_evals,
-        timing_reasons=timing_reasons
+        timing_reasons=timing_reasons,
+        weighted_frequency=weighted_summary["weighted_frequency"],
+        arithmetic_frequency=weighted_summary["arithmetic_frequency"],
+        worst_region_frequency=weighted_summary["worst_region_frequency"],
+        regional_weights=weighted_summary["weights_used"],
+        weighted_summary=weighted_summary,
+        degraded_pblocks=degraded_pblocks,
+        warning_pblocks=warning_pblocks,
+        quorum_triggered=quorum_triggered
     )
 
 

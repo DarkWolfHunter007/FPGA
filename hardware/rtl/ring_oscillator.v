@@ -24,13 +24,19 @@ module ring_oscillator (
     // Stage 0: Gated Inverting Element (NAND / Gated Inverter)
     // When i_en is high, stage0_out = ~stage4_out
     // When i_en is low, stage0_out = 1'b1 (halts oscillation)
+`ifdef SIMULATION
+    assign #0.23 stage0_out = ~(stage4_out & i_en);
+    assign #0.23 stage1_out = ~stage0_out;
+    assign #0.23 stage2_out = ~stage1_out;
+    assign #0.23 stage3_out = ~stage2_out;
+    assign #0.23 stage4_out = ~stage3_out;
+`else
     assign stage0_out = ~(stage4_out & i_en);
-
-    // Stages 1 to 4: Inverting delay chain
     assign stage1_out = ~stage0_out;
     assign stage2_out = ~stage1_out;
     assign stage3_out = ~stage2_out;
     assign stage4_out = ~stage3_out;
+`endif
 
     // Output tapped from stage4
     assign o_ro_clk = stage4_out;

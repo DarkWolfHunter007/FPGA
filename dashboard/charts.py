@@ -36,17 +36,127 @@ def apply_dark_theme(chart: alt.Chart) -> alt.Chart:
     )
 
 
-def create_temperature_chart(df: pd.DataFrame, baseline_temp: float = 35.0) -> alt.Chart:
-    """Graph 3: FPGA Die Temperature Trend (°C) with baseline and warning reference lines."""
+def compute_adaptive_y_domain(
+    series: pd.Series,
+    baseline: Optional[float] = None,
+    thresholds: Optional[List[float]] = None,
+    min_span: float = 0.4,
+    small_dev_threshold: float = 2.0,
+    small_dev_padding: float = 0.12,
+    major_dev_padding: float = 0.10,
+    clamp_min: Optional[float] = None,
+    clamp_max: Optional[float] = None,
+    zoom_factor: float = 3.0
+) -> Tuple[List[float], bool]:
+    """
+    Intelligent Adaptive Domain Calculator for FPGA Telemetry Graphs:
+    - Small Deviation: Zooms in tightly around data points, magnifying subtle
+      jitter, oscillations, and noise so they show prominently across the entire chart.
+    - Major Deviation: Widens the scale to comfortably capture large excursions.
+      
+    Returns:
+        (domain, is_small_dev):
+            domain: [y_min, y_max] suitable for alt.Scale(domain=...)
+            is_small_dev: True if data is in small-deviation (magnified) mode, False if major excursion
+    """
+    clean = series.dropna().astype(float) if series is not None else pd.Series(dtype=float)
+    if clean.empty:
+        center = float(baseline) if baseline is not None else 0.0
+        span = float(min_span) if min_span > 0 else 1.0
+        return [round(center - span / 2.0, 6), round(center + span / 2.0, 6)], True
+
+    y_min = float(clean.min())
+    y_max = float(clean.max())
+    spread = y_max - y_min
+
+    # Focus primarily on the active data cluster
+    targets = [y_min, y_max]
+
+    zf = max(float(zoom_factor), 1.0)
+    # Only pull baseline into target domain if it is within close proximity of the data cluster
+    if baseline is not None:
+        base_val = float(baseline)
+        close_dist = max(spread * 1.3, min_span / zf)
+        if abs(base_val - (y_min + y_max) / 2.0) <= close_dist:
+            targets.append(base_val)
+
+    # Excursion from baseline
+    if baseline is not None:
+        excursion = max(abs(y_min - baseline), abs(y_max - baseline))
+    else:
+        excursion = spread / 2.0
+
+    # Determine whether deviation is small or major
+    is_small_dev = (spread <= small_dev_threshold) and (excursion <= small_dev_threshold * 2.0)
+
+    if is_small_dev:
+        t_min, t_max = min(targets), max(targets)
+        # Scale min_span and padding according to zoom_factor
+        effective_min_span = max(min_span / zf, 0.000001)
+        span = max(t_max - t_min, effective_min_span)
+        # Tight headroom/footroom: ~12% at 1x down to ~4% at ultra zoom
+        pad_fraction = max(small_dev_padding / (zf ** 0.5), 0.04)
+        pad = span * pad_fraction
+        dom_min = t_min - pad
+        dom_max = t_max + pad
+    else:
+        # Major deviation regime: SCALE ACCORDINGLY!
+        if baseline is not None:
+            targets.append(float(baseline))
+        if thresholds:
+            for th in thresholds:
+                if th is not None:
+                    th_val = float(th)
+                    if (y_min <= th_val <= y_max) or (abs(th_val - y_min) <= spread * 0.25) or (abs(th_val - y_max) <= spread * 0.25):
+                        targets.append(th_val)
+        t_min, t_max = min(targets), max(targets)
+        span = max(t_max - t_min, min_span)
+        pad = span * major_dev_padding
+        dom_min = t_min - pad
+        dom_max = t_max + pad
+
+    if clamp_min is not None:
+        dom_min = max(dom_min, clamp_min)
+    if clamp_max is not None:
+        dom_max = min(dom_max, clamp_max)
+
+    if dom_max <= dom_min:
+        dom_max = dom_min + (min_span / zf)
+
+    return [round(dom_min, 6), round(dom_max, 6)], is_small_dev
+
+
+def create_temperature_chart(
+    df: pd.DataFrame,
+    baseline_temp: float = 35.0,
+    warning_temp: float = 50.0,
+    adaptive_scaling: bool = True
+) -> alt.Chart:
+    """Graph 3: FPGA Die Temperature Trend (°C) with adaptive deviation scaling."""
     plot_df = df.reset_index()
     plot_df["Sample_Index"] = plot_df.index
+
+    if adaptive_scaling and "Temperature" in plot_df.columns and not plot_df["Temperature"].dropna().empty:
+        domain, is_small_dev = compute_adaptive_y_domain(
+            plot_df["Temperature"],
+            baseline=baseline_temp,
+            thresholds=[warning_temp],
+            min_span=0.8,
+            small_dev_threshold=2.5,
+            small_dev_padding=0.20,
+            major_dev_padding=0.12,
+            clamp_min=0.0
+        )
+        scale = alt.Scale(domain=domain, zero=False)
+    else:
+        scale = alt.Scale(zero=False)
 
     line = alt.Chart(plot_df).mark_line(
         color="#FF5252",
         strokeWidth=2.2
     ).encode(
         x=alt.X("Sample_Index:Q", title="Timestamp / Sample Sequence"),
-        y=alt.Y("Temperature:Q", title="Die Temperature (°C)", scale=alt.Scale(zero=False)),
+        y=alt.Y("Temperature:Q", title="Die Temperature (°C)", scale=scale, axis=alt.Axis(format=".2f")),
         tooltip=[
             alt.Tooltip("Sample_Index:Q", title="Sample #"),
             alt.Tooltip("Temperature:Q", title="Temperature (°C)", format=".2f")
@@ -60,35 +170,62 @@ def create_temperature_chart(df: pd.DataFrame, baseline_temp: float = 35.0) -> a
         strokeDash=[3, 3],
         strokeWidth=1.2,
         opacity=0.8
-    ).encode(y="y:Q")
+    ).encode(y=alt.Y("y:Q", scale=scale))
 
     # Warning threshold line at 50°C
-    thresh_df = pd.DataFrame({"y": [50.0]})
+    thresh_df = pd.DataFrame({"y": [warning_temp]})
     warn_rule = alt.Chart(thresh_df).mark_rule(
         color="#FF9100",
         strokeDash=[4, 4],
         strokeWidth=1.2,
         opacity=0.7
-    ).encode(y="y:Q")
+    ).encode(y=alt.Y("y:Q", scale=scale))
 
     return apply_dark_theme(line + base_rule + warn_rule)
 
 
-def create_ro_frequency_chart(df: pd.DataFrame, baseline_freq: float = 436.0) -> alt.Chart:
-    """Graph 1: Ring Oscillator Frequency Trend (MHz) with baseline reference line."""
+def create_ro_frequency_chart(
+    df: pd.DataFrame,
+    baseline_freq: float = 436.0,
+    warning_freq: float = 422.9,
+    critical_freq: float = 412.0,
+    adaptive_scaling: bool = True
+) -> alt.Chart:
+    """Graph 1: Ring Oscillator Frequency Trend (MHz) with adaptive deviation scaling."""
     plot_df = df.reset_index()
     plot_df["Sample_Index"] = plot_df.index
+
+    tooltips = [
+        alt.Tooltip("Sample_Index:Q", title="Sample #"),
+        alt.Tooltip("RO_Frequency:Q", title="Calibrated Overall RO (MHz)", format=".2f"),
+    ]
+    if "RO_Raw_Frequency" in plot_df.columns:
+        tooltips.append(alt.Tooltip("RO_Raw_Frequency:Q", title="Raw Hardware Mean (MHz)", format=".2f"))
+    for r in ["RO_R1", "RO_R2", "RO_R3", "RO_R4"]:
+        if r in plot_df.columns:
+            tooltips.append(alt.Tooltip(f"{r}:Q", title=f"{r} (MHz)", format=".2f"))
+
+    if adaptive_scaling and "RO_Frequency" in plot_df.columns and not plot_df["RO_Frequency"].dropna().empty:
+        domain, is_small_dev = compute_adaptive_y_domain(
+            plot_df["RO_Frequency"],
+            baseline=baseline_freq,
+            thresholds=[warning_freq, critical_freq],
+            min_span=0.8,
+            small_dev_threshold=1.5,
+            small_dev_padding=0.20,
+            major_dev_padding=0.10
+        )
+        scale = alt.Scale(domain=domain, zero=False)
+    else:
+        scale = alt.Scale(zero=False)
 
     line = alt.Chart(plot_df).mark_line(
         color="#00E5FF",
         strokeWidth=2.2
     ).encode(
         x=alt.X("Sample_Index:Q", title="Timestamp / Sample Sequence"),
-        y=alt.Y("RO_Frequency:Q", title="RO Frequency (MHz)", scale=alt.Scale(zero=False)),
-        tooltip=[
-            alt.Tooltip("Sample_Index:Q", title="Sample #"),
-            alt.Tooltip("RO_Frequency:Q", title="Frequency (MHz)", format=".2f")
-        ]
+        y=alt.Y("RO_Frequency:Q", title="RO Frequency (MHz)", scale=scale, axis=alt.Axis(format=".2f")),
+        tooltip=tooltips
     )
 
     # Baseline reference line
@@ -98,22 +235,60 @@ def create_ro_frequency_chart(df: pd.DataFrame, baseline_freq: float = 436.0) ->
         strokeDash=[3, 3],
         strokeWidth=1.2,
         opacity=0.8
-    ).encode(y="y:Q")
+    ).encode(y=alt.Y("y:Q", scale=scale))
 
-    return apply_dark_theme(line + base_rule)
+    # Warning threshold reference line (e.g. 422.9 MHz)
+    warn_df = pd.DataFrame({"y": [warning_freq]})
+    warn_rule = alt.Chart(warn_df).mark_rule(
+        color="#FFB300",
+        strokeDash=[4, 4],
+        strokeWidth=1.2,
+        opacity=0.7
+    ).encode(y=alt.Y("y:Q", scale=scale))
+
+    # Critical threshold reference line (e.g. 412.0 MHz)
+    crit_df = pd.DataFrame({"y": [critical_freq]})
+    crit_rule = alt.Chart(crit_df).mark_rule(
+        color="#FF1744",
+        strokeDash=[4, 4],
+        strokeWidth=1.2,
+        opacity=0.7
+    ).encode(y=alt.Y("y:Q", scale=scale))
+
+    return apply_dark_theme(line + base_rule + warn_rule + crit_rule)
 
 
-def create_ro_delay_chart(df: pd.DataFrame, baseline_delay: float = 0.2294) -> alt.Chart:
-    """Graph 2: Ring Oscillator Delay Trend (Derived RO Stage Delay in ns) with baseline reference line."""
+def create_ro_delay_chart(
+    df: pd.DataFrame,
+    baseline_delay: float = 0.2294,
+    warning_delay: float = 0.2365,
+    critical_delay: float = 0.2427,
+    adaptive_scaling: bool = True
+) -> alt.Chart:
+    """Graph 2: Ring Oscillator Delay Trend with adaptive deviation scaling."""
     plot_df = df.reset_index()
     plot_df["Sample_Index"] = plot_df.index
+
+    if adaptive_scaling and "RO_Delay_ns" in plot_df.columns and not plot_df["RO_Delay_ns"].dropna().empty:
+        domain, is_small_dev = compute_adaptive_y_domain(
+            plot_df["RO_Delay_ns"],
+            baseline=baseline_delay,
+            thresholds=[warning_delay, critical_delay],
+            min_span=0.0008,
+            small_dev_threshold=0.0018,
+            small_dev_padding=0.20,
+            major_dev_padding=0.10
+        )
+        scale = alt.Scale(domain=domain, zero=False)
+    else:
+        scale = alt.Scale(zero=False)
 
     line = alt.Chart(plot_df).mark_line(
         color="#D946EF",
         strokeWidth=2.2
     ).encode(
         x=alt.X("Sample_Index:Q", title="Timestamp / Sample Sequence"),
-        y=alt.Y("RO_Delay_ns:Q", title="Derived RO Stage Delay (ns)", scale=alt.Scale(zero=False)),
+        y=alt.Y("RO_Delay_ns:Q", title="Derived RO Stage Delay (ns)", scale=scale, axis=alt.Axis(format=".4f")),
         tooltip=[
             alt.Tooltip("Sample_Index:Q", title="Sample #"),
             alt.Tooltip("RO_Delay_ns:Q", title="Stage Delay (ns)", format=".4f")
@@ -127,15 +302,49 @@ def create_ro_delay_chart(df: pd.DataFrame, baseline_delay: float = 0.2294) -> a
         strokeDash=[3, 3],
         strokeWidth=1.2,
         opacity=0.8
-    ).encode(y="y:Q")
+    ).encode(y=alt.Y("y:Q", scale=scale))
 
-    return apply_dark_theme(line + base_rule)
+    # Warning threshold reference line (e.g. 0.2365 ns)
+    warn_df = pd.DataFrame({"y": [warning_delay]})
+    warn_rule = alt.Chart(warn_df).mark_rule(
+        color="#FFB300",
+        strokeDash=[4, 4],
+        strokeWidth=1.2,
+        opacity=0.7
+    ).encode(y=alt.Y("y:Q", scale=scale))
+
+    # Critical threshold reference line (e.g. 0.2427 ns)
+    crit_df = pd.DataFrame({"y": [critical_delay]})
+    crit_rule = alt.Chart(crit_df).mark_rule(
+        color="#FF1744",
+        strokeDash=[4, 4],
+        strokeWidth=1.2,
+        opacity=0.7
+    ).encode(y=alt.Y("y:Q", scale=scale))
+
+    return apply_dark_theme(line + base_rule + warn_rule + crit_rule)
 
 
-def create_error_rate_chart(df: pd.DataFrame) -> alt.Chart:
-    """Graph 4: Functional Error Rate Trend."""
+def create_error_rate_chart(
+    df: pd.DataFrame,
+    adaptive_scaling: bool = True
+) -> alt.Chart:
+    """Graph 4: Functional Error Rate Trend with adaptive deviation scaling."""
     plot_df = df.reset_index()
     plot_df["Sample_Index"] = plot_df.index
+
+    if adaptive_scaling and "Error_Rate" in plot_df.columns and not plot_df["Error_Rate"].dropna().empty:
+        clean = plot_df["Error_Rate"].dropna().astype(float)
+        y_max = float(clean.max()) if not clean.empty else 0.000010
+        if y_max <= 0.000100:
+            # Small deviation (nominal PRBS ~10 ppm): zoom in so 10 ppm curve shows bigger!
+            dom_max = max(round(y_max * 1.35, 6), 0.000025)
+        else:
+            # Major deviation (fault injection ~2000 ppm): scale out smoothly
+            dom_max = round(y_max * 1.15, 6)
+        scale = alt.Scale(domain=[0.0, dom_max], zero=True)
+    else:
+        scale = alt.Scale(zero=True)
 
     area = alt.Chart(plot_df).mark_area(
         line={"color": "#FFAB00", "width": 2},
@@ -149,7 +358,7 @@ def create_error_rate_chart(df: pd.DataFrame) -> alt.Chart:
         )
     ).encode(
         x=alt.X("Sample_Index:Q", title="Timestamp / Sample Sequence"),
-        y=alt.Y("Error_Rate:Q", title="Functional Error Rate", scale=alt.Scale(zero=True)),
+        y=alt.Y("Error_Rate:Q", title="Functional Error Rate", scale=scale, axis=alt.Axis(format=".5f")),
         tooltip=[
             alt.Tooltip("Sample_Index:Q", title="Sample #"),
             alt.Tooltip("Error_Rate:Q", title="Error Rate", format=".6f")
@@ -158,8 +367,13 @@ def create_error_rate_chart(df: pd.DataFrame) -> alt.Chart:
     return apply_dark_theme(area)
 
 
-def create_voltage_chart(df: pd.DataFrame, rail: str = "VCCINT", nominal_voltage: float = 1.000) -> alt.Chart:
-    """Graph 5: Supply Voltage Rail Trend (V)."""
+def create_voltage_chart(
+    df: pd.DataFrame,
+    rail: str = "VCCINT",
+    nominal_voltage: float = 1.000,
+    adaptive_scaling: bool = True
+) -> alt.Chart:
+    """Graph 5: Supply Voltage Rail Trend (V) with adaptive deviation scaling."""
     plot_df = df.reset_index()
     plot_df["Sample_Index"] = plot_df.index
 
@@ -170,12 +384,26 @@ def create_voltage_chart(df: pd.DataFrame, rail: str = "VCCINT", nominal_voltage
     }
     color = rail_colors.get(rail, "#00E676")
 
+    if adaptive_scaling and rail in plot_df.columns and not plot_df[rail].dropna().empty:
+        domain, is_small_dev = compute_adaptive_y_domain(
+            plot_df[rail],
+            baseline=nominal_voltage,
+            min_span=0.010,
+            small_dev_threshold=0.020,
+            small_dev_padding=0.20,
+            major_dev_padding=0.12,
+            clamp_min=0.0
+        )
+        scale = alt.Scale(domain=domain, zero=False)
+    else:
+        scale = alt.Scale(zero=False)
+
     line = alt.Chart(plot_df).mark_line(
         color=color,
         strokeWidth=2.0
     ).encode(
         x=alt.X("Sample_Index:Q", title="Timestamp / Sample Sequence"),
-        y=alt.Y(f"{rail}:Q", title=f"{rail} Voltage (V)", scale=alt.Scale(zero=False)),
+        y=alt.Y(f"{rail}:Q", title=f"{rail} Voltage (V)", scale=scale, axis=alt.Axis(format=".3f")),
         tooltip=[
             alt.Tooltip("Sample_Index:Q", title="Sample #"),
             alt.Tooltip(f"{rail}:Q", title=f"{rail} (V)", format=".4f")
@@ -188,7 +416,7 @@ def create_voltage_chart(df: pd.DataFrame, rail: str = "VCCINT", nominal_voltage
         color="rgba(255, 255, 255, 0.35)",
         strokeDash=[2, 2],
         strokeWidth=1.0
-    ).encode(y="y:Q")
+    ).encode(y=alt.Y("y:Q", scale=scale))
 
     return apply_dark_theme(line + nom_rule)
 
@@ -252,17 +480,18 @@ def create_normalized_indicators_chart(df: pd.DataFrame) -> alt.Chart:
     plot_df = pd.DataFrame()
     plot_df["Sample_Index"] = df.reset_index().index
 
-    def min_max_norm(series: pd.Series, invert: bool = False) -> pd.Series:
+    def min_max_norm(series: pd.Series, noise_floor: float = 0.01, invert: bool = False) -> pd.Series:
         s_min, s_max = series.min(), series.max()
-        if s_max == s_min:
+        diff = s_max - s_min
+        if diff < noise_floor:
             return pd.Series(0.0, index=series.index)
-        norm = (series - s_min) / (s_max - s_min)
+        norm = (series - s_min) / diff
         return (1.0 - norm) if invert else norm
 
-    norm_temp = min_max_norm(df["Temperature"])
-    norm_ro_deg = min_max_norm(df["RO_Frequency"], invert=True)
-    norm_delay = min_max_norm(df["RO_Delay_ns"])
-    norm_error = min_max_norm(df["Error_Rate"])
+    norm_temp = min_max_norm(df["Temperature"], noise_floor=0.5)
+    norm_ro_deg = min_max_norm(df["RO_Frequency"], noise_floor=0.5, invert=True)
+    norm_delay = min_max_norm(df["RO_Delay_ns"], noise_floor=0.0005)
+    norm_error = min_max_norm(df["Error_Rate"], noise_floor=0.000020)
 
     melted = pd.DataFrame({
         "Sample_Index": plot_df["Sample_Index"],

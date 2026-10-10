@@ -22,8 +22,11 @@ from dashboard.config import (
     HEALTH_COLORS,
     STATUS_BG_COLORS,
     REGIONAL_CONFIG,
+    DEFAULT_REGIONAL_WEIGHTS,
     evaluate_regional_health,
-    validate_regional_baseline
+    validate_regional_baseline,
+    validate_regional_weights,
+    calculate_weighted_regional_frequency
 )
 
 # Default nominal benchmarks per region from physical Basys 3 telemetry
@@ -31,41 +34,41 @@ REGIONAL_DEFAULTS = {
     "R1": {
         "id": "R1",
         "name": "Region 1 (R1)",
-        "quadrant": "Northwest (NW)",
-        "clock_region": "X0Y2",
+        "quadrant": "Region 1 (R1)",
+        "clock_region": "CLOCKREGION_X0Y2",
         "pblock": "pblock_R1",
         "slice_range": "SLICE_X0Y100:SLICE_X35Y149",
-        "nominal_freq": 436.3,
-        "nominal_delay_ns": 0.2292
+        "nominal_freq": 436.0,
+        "nominal_delay_ns": 0.2294
     },
     "R2": {
         "id": "R2",
         "name": "Region 2 (R2)",
-        "quadrant": "Northeast (NE)",
-        "clock_region": "X1Y2",
+        "quadrant": "Region 2 (R2)",
+        "clock_region": "CLOCKREGION_X1Y2",
         "pblock": "pblock_R2",
         "slice_range": "SLICE_X36Y100:SLICE_X57Y149",
-        "nominal_freq": 435.8,
-        "nominal_delay_ns": 0.2295
+        "nominal_freq": 436.0,
+        "nominal_delay_ns": 0.2294
     },
     "R3": {
         "id": "R3",
         "name": "Region 3 (R3)",
-        "quadrant": "Southwest (SW)",
-        "clock_region": "X0Y0",
+        "quadrant": "Region 3 (R3)",
+        "clock_region": "CLOCKREGION_X0Y0",
         "pblock": "pblock_R3",
         "slice_range": "SLICE_X0Y0:SLICE_X35Y49",
-        "nominal_freq": 436.1,
-        "nominal_delay_ns": 0.2293
+        "nominal_freq": 436.0,
+        "nominal_delay_ns": 0.2294
     },
     "R4": {
         "id": "R4",
         "name": "Region 4 (R4)",
-        "quadrant": "Southeast (SE)",
-        "clock_region": "X1Y0",
+        "quadrant": "Region 4 (R4)",
+        "clock_region": "CLOCKREGION_X1Y0",
         "pblock": "pblock_R4",
         "slice_range": "SLICE_X36Y0:SLICE_X65Y49",
-        "nominal_freq": 435.9,
+        "nominal_freq": 436.0,
         "nominal_delay_ns": 0.2294
     }
 }
@@ -140,7 +143,9 @@ def generate_four_region_data(
 
 def render_four_region_map_html(
     regions: List[Dict[str, Any]],
-    composite_risk: float = 0.0
+    composite_risk: float = 0.0,
+    weighted_summary: Optional[Dict[str, Any]] = None,
+    regional_weights: Optional[Dict[str, float]] = None
 ) -> str:
     """
     Renders an interactive high-tech 2x2 physical FPGA quadrant layout:
@@ -149,7 +154,49 @@ def render_four_region_map_html(
        ├──────────────┼──────────────┤
        │ R3 Southwest │ R4 Southeast │
        └──────────────┴──────────────┘
+    Includes an aggregate summary banner showing:
+      1. Weighted RO Average (configurable weighted estimate)
+      2. Hardware Arithmetic Mean (UART RO_Frequency baseline)
+      3. Worst-Case Regional Frequency (independent safety bound)
     """
+    summary = weighted_summary or calculate_weighted_regional_frequency(regions, weights=regional_weights)
+    w_freq = summary.get("weighted_frequency")
+    a_freq = summary.get("arithmetic_frequency")
+    worst_freq = summary.get("worst_region_frequency")
+    worst_id = summary.get("worst_region_id")
+    weights_used = summary.get("weights_used", DEFAULT_REGIONAL_WEIGHTS)
+
+    w_freq_str = f"{w_freq:.2f}" if w_freq is not None else "N/A"
+    a_freq_str = f"{a_freq:.2f}" if a_freq is not None else "N/A"
+    worst_freq_str = f"{worst_freq:.2f}" if worst_freq is not None else "N/A"
+
+    weights_display_parts = [f"{r}:{w:.2f}" for r, w in sorted(weights_used.items())]
+    weights_str = " | ".join(weights_display_parts)
+
+    crit_count = sum(1 for r in regions if r.get("current_freq", 999.0) <= 412.0)
+    warn_count = sum(1 for r in regions if 412.0 < r.get("current_freq", 999.0) <= 422.9)
+    degrading_total = crit_count + warn_count
+
+    # Determine worst region color and safety note with Quorum policy
+    if worst_freq is not None and worst_freq <= 412.0:
+        worst_color = HEALTH_COLORS["Degraded"]
+        if degrading_total >= 2:
+            worst_note = f"Multi-pblock degradation (&ge; 2 pblocks; overall Degraded)"
+        else:
+            worst_note = f"Isolated pblock critical in {worst_id} (&le; 412.0 MHz; Quorum: &ge; 2 for overall)"
+    elif worst_freq is not None and worst_freq <= 422.9:
+        worst_color = HEALTH_COLORS["Warning"]
+        if degrading_total >= 2:
+            worst_note = f"Multi-pblock warning drift (&ge; 2 pblocks; overall Warning)"
+        else:
+            worst_note = f"Isolated pblock warning in {worst_id} (&le; 422.9 MHz; Quorum: &ge; 2 for overall)"
+    elif worst_freq is not None:
+        worst_color = HEALTH_COLORS["Healthy"]
+        worst_note = f"Healthy operating envelope ({worst_id})"
+    else:
+        worst_color = "#94A3B8"
+        worst_note = "No valid regional telemetry"
+
     card_htmls = []
     for r in regions:
         drift_sign = "+" if r["drift_mhz"] >= 0 else ""
@@ -167,10 +214,13 @@ def render_four_region_map_html(
             transition: transform 0.15s ease-in-out;
         ">
             <!-- Region Header -->
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 6px;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 6px;">
                 <div>
-                    <strong style="font-size: 1.05rem; color: #FFFFFF; font-family: 'JetBrains Mono', monospace;">{r['id']}</strong>
-                    <span style="color: #94A3B8; font-size: 0.85rem; margin-left: 6px;">{r['quadrant']}</span>
+                    <strong style="font-size: 1.05rem; color: #FFFFFF; font-family: 'JetBrains Mono', monospace;">{r['name']}</strong>
+                    <div style="font-size: 0.75rem; color: #94A3B8; margin-top: 2px; line-height: 1.35;">
+                        Clock Region: <code style="color: #38BDF8; font-size: 0.74rem;">{r['clock_region']}</code><br/>
+                        Physical Constraint: <code style="color: #F1F5F9; font-size: 0.74rem;">{r['pblock']}</code>
+                    </div>
                 </div>
                 <span style="
                     background: {r['bg']};
@@ -208,7 +258,6 @@ def render_four_region_map_html(
             <div style="font-size: 0.78rem; line-height: 1.4; color: #CBD5E1; margin-bottom: 6px;">
                 <strong>Timing Drift:</strong> <span style="font-family: 'JetBrains Mono', monospace; color: {r['color']}; font-weight: 600;">{drift_sign}{r['drift_mhz']:.2f} MHz ({drift_sign}{r['drift_pct']:.2f}%)</span>
                 <br/><strong>Critical Boundary:</strong> <code style="color: #F87171; font-size: 0.72rem;">{crit_str}</code> | <strong>Provenance:</strong> <span style="color: #94A3B8; font-size: 0.72rem;">{prov_label}</span>
-                <br/><strong>Configured Pblock:</strong> <code style="color: #F1F5F9; font-size: 0.72rem;">{r['pblock']} ({r['clock_region']})</code>
                 <br/><strong>Silicon Coordinates:</strong> <code style="color: #64748B; font-size: 0.70rem;">{r['slice_range']}</code>
             </div>
 
@@ -233,6 +282,37 @@ def render_four_region_map_html(
             </div>
         </div>
 
+        <!-- Aggregate Regional Summary Metrics Bar -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 14px; background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; padding: 12px 14px;">
+            <div>
+                <div style="font-size: 0.72rem; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.5px;">Weighted RO Average (Summary)</div>
+                <div style="font-size: 1.20rem; font-weight: 700; color: #38BDF8; font-family: 'JetBrains Mono', monospace;">
+                    {w_freq_str} <span style="font-size: 0.75rem; color: #64748B;">MHz</span>
+                </div>
+                <div style="font-size: 0.70rem; color: #94A3B8; margin-top: 2px;">
+                    Weights: <code style="color: #CBD5E1; font-size: 0.68rem;">{weights_str}</code>
+                </div>
+            </div>
+            <div>
+                <div style="font-size: 0.72rem; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.5px;">Hardware Arithmetic Mean</div>
+                <div style="font-size: 1.20rem; font-weight: 700; color: #F8FAFC; font-family: 'JetBrains Mono', monospace;">
+                    {a_freq_str} <span style="font-size: 0.75rem; color: #64748B;">MHz</span>
+                </div>
+                <div style="font-size: 0.70rem; color: #94A3B8; margin-top: 2px;">
+                    UART Telemetry: <code style="color: #38BDF8; font-size: 0.68rem;">RO_Frequency (Sum &gt;&gt; 2)</code>
+                </div>
+            </div>
+            <div>
+                <div style="font-size: 0.72rem; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.5px;">Worst-Case Regional Frequency</div>
+                <div style="font-size: 1.20rem; font-weight: 700; color: {worst_color}; font-family: 'JetBrains Mono', monospace;">
+                    {worst_freq_str} <span style="font-size: 0.75rem; color: #64748B;">MHz</span>
+                </div>
+                <div style="font-size: 0.70rem; color: {worst_color}; margin-top: 2px; font-weight: 500;">
+                    {worst_note}
+                </div>
+            </div>
+        </div>
+
         <!-- 2x2 Physical Layout Grid -->
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
             {grid_content}
@@ -242,6 +322,7 @@ def render_four_region_map_html(
         <div style="margin-top: 14px; padding: 10px 12px; background: rgba(30, 41, 59, 0.6); border-left: 3px solid #38BDF8; border-radius: 4px; font-size: 0.75rem; color: #94A3B8; line-height: 1.45;">
             <strong>Physically Honest Fault Model:</strong> Each regional monitor tracks gate delay (tau = 100 / f_MHz) within its constrained Pblock.
             RO frequency shift reflects regional NBTI/HCI aging, supply droop, or thermal variation. Floorplan coordinates represent configured Pblock placement constraints in the Vivado floorplan, not dynamically localized physical defect coordinates.
+            <br/><strong>Multi-Pblock Quorum Policy:</strong> The weighted RO average serves as the overall health metric on top. An isolated single-pblock anomaly (e.g. R2) does not degrade the entire chip; 2 or more degrading pblocks are required to trigger overall system degradation.
         </div>
     </div>
     """).strip()
