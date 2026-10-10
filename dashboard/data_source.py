@@ -17,7 +17,13 @@ import pandas as pd
 from config import RO_STAGES, calculate_ro_delay_ns
 from ml.feature_engineering import create_features
 from communication.uart_receiver import FPGAUARTReceiver
-from dashboard.config import SENSOR_CONFIG, evaluate_engineering_limits, LimitSeverity
+from dashboard.config import (
+    SENSOR_CONFIG,
+    REGIONAL_CONFIG,
+    evaluate_engineering_limits,
+    validate_regional_baseline,
+    LimitSeverity
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -124,15 +130,18 @@ class MockCSVDataSource:
         history_df = self.engineered_df.iloc[start_idx:sample_idx + 1].copy()
         latest_sample = self.engineered_df.iloc[sample_idx].copy()
 
-        eng_assessment = evaluate_engineering_limits(latest_sample.to_dict())
-
         base_dict = self.baseline_sample.to_dict() if self.baseline_sample is not None else {}
-        regional_baselines = {
-            "RO_R1": float(base_dict.get("RO_R1", 436.3)),
-            "RO_R2": float(base_dict.get("RO_R2", 435.8)),
-            "RO_R3": float(base_dict.get("RO_R3", 436.1)),
-            "RO_R4": float(base_dict.get("RO_R4", 435.9)),
-        }
+        regional_baselines = {}
+        for r in ["R1", "R2", "R3", "R4"]:
+            ro_k = f"RO_{r}"
+            cand = base_dict.get(ro_k)
+            _, chosen_base, _, _ = validate_regional_baseline(r, cand)
+            regional_baselines[ro_k] = chosen_base
+
+        eng_assessment = evaluate_engineering_limits(
+            latest_sample.to_dict(),
+            regional_baselines=regional_baselines
+        )
 
         metadata = {
             "source_type": "MOCK",
@@ -252,14 +261,17 @@ class LiveSimulationDataSource:
         history_df = engineered_df.tail(window_size).copy()
         latest_sample = engineered_df.iloc[-1].copy()
 
-        eng_assessment = evaluate_engineering_limits(latest_sample.to_dict())
+        regional_baselines = {}
+        for r in ["R1", "R2", "R3", "R4"]:
+            ro_k = f"RO_{r}"
+            cand = self.baseline_sample.get(ro_k)
+            _, chosen_base, _, _ = validate_regional_baseline(r, cand)
+            regional_baselines[ro_k] = chosen_base
 
-        regional_baselines = {
-            "RO_R1": float(self.baseline_sample.get("RO_R1", 436.3)),
-            "RO_R2": float(self.baseline_sample.get("RO_R2", 435.8)),
-            "RO_R3": float(self.baseline_sample.get("RO_R3", 436.1)),
-            "RO_R4": float(self.baseline_sample.get("RO_R4", 435.9)),
-        }
+        eng_assessment = evaluate_engineering_limits(
+            latest_sample.to_dict(),
+            regional_baselines=regional_baselines
+        )
 
         metadata = {
             "source_type": "SIMULATION",
@@ -342,7 +354,41 @@ class LiveUARTDataSource:
                     for r in ["RO_R1", "RO_R2", "RO_R3", "RO_R4", "RO_R1_Delay_ns", "RO_R2_Delay_ns", "RO_R3_Delay_ns", "RO_R4_Delay_ns"]:
                         if r in init_df.columns:
                             base_cols.append(r)
-                    self.baseline_sample = init_df[base_cols].mean().to_dict()
+                    cand_base = init_df[base_cols].mean().to_dict()
+
+                    # Validate candidate baseline: A baseline MUST represent a verified healthy state.
+                    # Degraded or out-of-limits initial readings must NOT poison the baseline reference.
+                    is_candidate_healthy = True
+                    for r in ["R1", "R2", "R3", "R4"]:
+                        ro_k = f"RO_{r}"
+                        if ro_k in cand_base:
+                            is_v, _, _, _ = validate_regional_baseline(r, cand_base[ro_k])
+                            if not is_v:
+                                is_candidate_healthy = False
+                                break
+
+                    cand_eng = evaluate_engineering_limits(cand_base)
+                    if not is_candidate_healthy or cand_eng.has_hard_violations or cand_eng.max_severity != LimitSeverity.NORMAL:
+                        # Reject candidate; fall back to documented factory nominals
+                        self.baseline_sample = {
+                            "Temperature": 35.0,
+                            "VCCINT": 1.000,
+                            "VCCAUX": 1.800,
+                            "VCCBRAM": 1.000,
+                            "RO_Frequency": 436.0,
+                            "RO_Delay_ns": 0.2294,
+                            "RO_R1": 436.3,
+                            "RO_R1_Delay_ns": 0.2292,
+                            "RO_R2": 435.8,
+                            "RO_R2_Delay_ns": 0.2295,
+                            "RO_R3": 436.1,
+                            "RO_R3_Delay_ns": 0.2293,
+                            "RO_R4": 435.9,
+                            "RO_R4_Delay_ns": 0.2294,
+                            "Error_Rate": 0.000010
+                        }
+                    else:
+                        self.baseline_sample = cand_base
         return last_packet
 
     def get_data(self, window_size: int = 150, sample_idx: Optional[int] = None) -> Tuple[pd.DataFrame, pd.Series, Dict[str, Any]]:
@@ -391,14 +437,18 @@ class LiveUARTDataSource:
             prov_map[r] = "MEASURED" if (has_real_data and r in latest_sample) else "UNAVAILABLE"
             prov_map[f"{r}_Delay_ns"] = "DERIVED" if (has_real_data and r in latest_sample) else "UNAVAILABLE"
 
-        eng_assessment = evaluate_engineering_limits(latest_sample.to_dict(), provenance_map=prov_map)
+        regional_baselines = {}
+        for r in ["R1", "R2", "R3", "R4"]:
+            ro_k = f"RO_{r}"
+            cand_val = (self.baseline_sample or {}).get(ro_k)
+            _, chosen_base, _, _ = validate_regional_baseline(r, cand_val)
+            regional_baselines[ro_k] = chosen_base
 
-        regional_baselines = {
-            "RO_R1": float((self.baseline_sample or {}).get("RO_R1", 436.3)),
-            "RO_R2": float((self.baseline_sample or {}).get("RO_R2", 435.8)),
-            "RO_R3": float((self.baseline_sample or {}).get("RO_R3", 436.1)),
-            "RO_R4": float((self.baseline_sample or {}).get("RO_R4", 435.9)),
-        }
+        eng_assessment = evaluate_engineering_limits(
+            latest_sample.to_dict(),
+            provenance_map=prov_map,
+            regional_baselines=regional_baselines
+        )
 
         metadata = {
             "source_type": "LIVE_UART",
@@ -663,14 +713,18 @@ class EstimatedDataSource:
             prov_map[r] = "DERIVED_SPATIAL" if "RO_Frequency" in user_provided else "ASSUMED_BASELINE"
             prov_map[f"{r}_Delay_ns"] = "DERIVED" if "RO_Frequency" in user_provided else "ASSUMED_BASELINE"
 
-        eng_assessment = evaluate_engineering_limits(current_frame, provenance_map=prov_map)
+        regional_baselines = {}
+        for r in ["R1", "R2", "R3", "R4"]:
+            ro_k = f"RO_{r}"
+            cand = self.NOMINAL_BASELINE.get(ro_k)
+            _, chosen_base, _, _ = validate_regional_baseline(r, cand)
+            regional_baselines[ro_k] = chosen_base
 
-        regional_baselines = {
-            "RO_R1": float(self.NOMINAL_BASELINE.get("RO_R1", 436.3)),
-            "RO_R2": float(self.NOMINAL_BASELINE.get("RO_R2", 435.8)),
-            "RO_R3": float(self.NOMINAL_BASELINE.get("RO_R3", 436.1)),
-            "RO_R4": float(self.NOMINAL_BASELINE.get("RO_R4", 435.9)),
-        }
+        eng_assessment = evaluate_engineering_limits(
+            current_frame,
+            provenance_map=prov_map,
+            regional_baselines=regional_baselines
+        )
 
         metadata = {
             "source_type": "ESTIMATED",
