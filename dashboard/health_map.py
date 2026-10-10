@@ -154,6 +154,8 @@ def render_four_region_map_html(
     for r in regions:
         drift_sign = "+" if r["drift_mhz"] >= 0 else ""
         delay_drift_sign = "+" if r["delay_drift_pct"] >= 0 else ""
+        crit_str = f"{r['critical_boundary']:.1f} MHz" if r.get("critical_boundary") else (f"{r['critical_freq']:.1f} MHz" if r.get("critical_freq") else "N/A")
+        prov_label = r.get("provenance", "MEASURED")
 
         card_htmls.append(f"""
         <div style="
@@ -191,7 +193,7 @@ def render_four_region_map_html(
                     <div style="font-size: 1.15rem; font-weight: 700; color: #F8FAFC; font-family: 'JetBrains Mono', monospace;">
                         {r['current_freq']:.2f} <span style="font-size: 0.75rem; color: #64748B;">MHz</span>
                     </div>
-                    <div style="font-size: 0.72rem; color: #64748B;">Base: {r['baseline_freq']:.2f} MHz</div>
+                    <div style="font-size: 0.72rem; color: #64748B;">Base: {r['baseline_freq']:.2f} MHz | Crit: {crit_str}</div>
                 </div>
                 <div>
                     <div style="font-size: 0.72rem; color: #94A3B8; text-transform: uppercase;">Stage Delay (&tau;)</div>
@@ -205,7 +207,8 @@ def render_four_region_map_html(
             <!-- Timing Drift & Physical Mapping -->
             <div style="font-size: 0.78rem; line-height: 1.4; color: #CBD5E1; margin-bottom: 6px;">
                 <strong>Timing Drift:</strong> <span style="font-family: 'JetBrains Mono', monospace; color: {r['color']}; font-weight: 600;">{drift_sign}{r['drift_mhz']:.2f} MHz ({drift_sign}{r['drift_pct']:.2f}%)</span>
-                <br/><strong>Physical Pblock:</strong> <code style="color: #F1F5F9; font-size: 0.72rem;">{r['pblock']} ({r['clock_region']})</code>
+                <br/><strong>Critical Boundary:</strong> <code style="color: #F87171; font-size: 0.72rem;">{crit_str}</code> | <strong>Provenance:</strong> <span style="color: #94A3B8; font-size: 0.72rem;">{prov_label}</span>
+                <br/><strong>Configured Pblock:</strong> <code style="color: #F1F5F9; font-size: 0.72rem;">{r['pblock']} ({r['clock_region']})</code>
                 <br/><strong>Silicon Coordinates:</strong> <code style="color: #64748B; font-size: 0.70rem;">{r['slice_range']}</code>
             </div>
 
@@ -238,7 +241,7 @@ def render_four_region_map_html(
         <!-- Physical Health Methodology Callout -->
         <div style="margin-top: 14px; padding: 10px 12px; background: rgba(30, 41, 59, 0.6); border-left: 3px solid #38BDF8; border-radius: 4px; font-size: 0.75rem; color: #94A3B8; line-height: 1.45;">
             <strong>Physically Honest Fault Model:</strong> Each regional monitor tracks gate delay (tau = 100 / f_MHz) within its constrained Pblock.
-            RO frequency shift reflects regional NBTI/HCI aging, supply droop, or thermal variation. It does not indicate individual LUT stuck-at faults (addressed via PRBS-7 functional test).
+            RO frequency shift reflects regional NBTI/HCI aging, supply droop, or thermal variation. Floorplan coordinates represent configured Pblock placement constraints in the Vivado floorplan, not dynamically localized physical defect coordinates.
         </div>
     </div>
     """).strip()

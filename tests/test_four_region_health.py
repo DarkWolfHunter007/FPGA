@@ -139,6 +139,24 @@ class TestFourRegionHealth(unittest.TestCase):
         self.assertIn("Southeast (SE)", html)
         self.assertIn("pblock_R1", html)
         self.assertIn("pblock_R4", html)
+        self.assertIn("Base:", html)
+        self.assertIn("Crit:", html)
+        self.assertIn("Critical Boundary:", html)
+        self.assertIn("Provenance:", html)
+        self.assertIn("Configured Pblock:", html)
+
+        # Verify degraded quadrant renders Degraded badge and critical explanation
+        telemetry_degraded = {
+            "RO_Frequency": 322.3,
+            "RO_R1": 436.3,
+            "RO_R2": 322.1,
+            "RO_R3": 436.1,
+            "RO_R4": 435.9
+        }
+        regions_deg = generate_four_region_data(telemetry_degraded)
+        html_deg = render_four_region_map_html(regions_deg, composite_risk=0.85)
+        self.assertIn("DEGRADED", html_deg)
+        self.assertIn("Below critical boundary", html_deg)
 
     def test_data_sources_provide_regional_telemetry(self):
         """Verify that simulation and estimated data sources output regional fields."""
