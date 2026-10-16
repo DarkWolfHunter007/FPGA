@@ -21,7 +21,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import RO_STAGES
+from config import RO_STAGES, RO_NOMINAL_MHZ, RO_NOMINAL_DELAY_NS
 from dashboard.config import (
     DEVICE_NAME,
     ARCHITECTURE,
@@ -661,8 +661,13 @@ try:
         regional_baselines=reg_baselines
     )
 
-    # Calibrate history_df timing series across the entire window with Multi-Pblock Quorum & Weights
-    history_df = calibrate_history_dataframe(history_df, weights=eng_assessment.regional_weights)
+    # Build the overall RO series on a baseline-normalised scale: each region is divided by its
+    # OWN baseline, so placement-driven offsets (e.g. R2 = 321.8 MHz) are not read as aging.
+    history_df = calibrate_history_dataframe(
+        history_df,
+        weights=eng_assessment.regional_weights,
+        regional_baselines=reg_baselines
+    )
     latest = history_df.iloc[-1].copy()
     curr_ro_freq = float(latest["RO_Frequency"])
     curr_ro_delay = float(latest["RO_Delay_ns"])
@@ -696,7 +701,12 @@ except Exception as e:
 
 
 # Baseline and shift metrics
-baseline = meta.get("baseline", {})
+baseline = dict(meta.get("baseline", {}))
+if all(f"RO_R{_i}" in history_df.columns for _i in range(1, 5)):
+    # The calibrated overall RO series is baseline-normalised (factory-nominal scale), so its
+    # reference value is the factory nominal rather than the raw hardware mean.
+    baseline["RO_Frequency"] = float(RO_NOMINAL_MHZ)
+    baseline["RO_Delay_ns"] = float(RO_NOMINAL_DELAY_NS)
 base_ro_freq = float(baseline.get("RO_Frequency", 436.0))
 ro_freq_shift = ((curr_ro_freq - base_ro_freq) / base_ro_freq) * 100.0
 

@@ -23,6 +23,7 @@ from dashboard.config import (
     STATUS_BG_COLORS,
     REGIONAL_CONFIG,
     DEFAULT_REGIONAL_WEIGHTS,
+    REGIONAL_QUORUM_MIN,
     evaluate_regional_health,
     validate_regional_baseline,
     validate_regional_weights,
@@ -173,26 +174,45 @@ def render_four_region_map_html(
     weights_display_parts = [f"{r}:{w:.2f}" for r, w in sorted(weights_used.items())]
     weights_str = " | ".join(weights_display_parts)
 
-    crit_count = sum(1 for r in regions if r.get("current_freq", 999.0) <= 412.0)
-    warn_count = sum(1 for r in regions if 412.0 < r.get("current_freq", 999.0) <= 422.9)
+    # Counts come from each region's own evaluation (limits follow that region's baseline),
+    # not from one absolute frequency shared by all regions.
+    crit_count = sum(1 for r in regions if r.get("state") == "Degraded")
+    warn_count = sum(1 for r in regions if r.get("state") == "Warning")
     degrading_total = crit_count + warn_count
+    quorum_min = max(1, int(REGIONAL_QUORUM_MIN))
+
+    worst_region = next((r for r in regions if r.get("id") == worst_id), None)
+    worst_state = worst_region.get("state") if worst_region else None
+    worst_crit_str = ""
+    if worst_region:
+        worst_crit_str = f"{worst_region.get('critical_freq', 0.0):.1f}"
+    worst_warn_str = f"{worst_region.get('warning_freq', 0.0):.1f}" if worst_region else ""
 
     # Determine worst region color and safety note with Quorum policy
-    if worst_freq is not None and worst_freq <= 412.0:
+    if worst_freq is not None and worst_state == "Degraded":
         worst_color = HEALTH_COLORS["Degraded"]
-        if degrading_total >= 2:
-            worst_note = f"Multi-pblock degradation (&ge; 2 pblocks; overall Degraded)"
+        if degrading_total >= quorum_min:
+            worst_note = f"Pblock degradation in {worst_id} (&le; {worst_crit_str} MHz, its own baseline limit; overall Degraded)"
         else:
-            worst_note = f"Isolated pblock critical in {worst_id} (&le; 412.0 MHz; Quorum: &ge; 2 for overall)"
-    elif worst_freq is not None and worst_freq <= 422.9:
+            worst_note = f"Isolated pblock critical in {worst_id} (&le; {worst_crit_str} MHz; Quorum: &ge; {quorum_min} for overall)"
+    elif worst_freq is not None and worst_state == "Warning":
         worst_color = HEALTH_COLORS["Warning"]
-        if degrading_total >= 2:
-            worst_note = f"Multi-pblock warning drift (&ge; 2 pblocks; overall Warning)"
+        if degrading_total >= quorum_min:
+            worst_note = f"Pblock warning drift in {worst_id} (&le; {worst_warn_str} MHz, its own baseline limit; overall Warning)"
         else:
-            worst_note = f"Isolated pblock warning in {worst_id} (&le; 422.9 MHz; Quorum: &ge; 2 for overall)"
+            worst_note = f"Isolated pblock warning in {worst_id} (&le; {worst_warn_str} MHz; Quorum: &ge; {quorum_min} for overall)"
+    elif worst_freq is not None and degrading_total > 0:
+        # Lowest absolute frequency is healthy against its own baseline, but another region is not.
+        bad = next(r for r in regions if r.get("state") in ("Degraded", "Warning"))
+        worst_color = HEALTH_COLORS[bad["state"]]
+        worst_note = f"{bad['id']} is {bad['state'].lower()} against its own baseline ({bad['drift_pct']:+.2f}% drift)"
     elif worst_freq is not None:
         worst_color = HEALTH_COLORS["Healthy"]
-        worst_note = f"Healthy operating envelope ({worst_id})"
+        offset = worst_region.get("baseline_offset_pct") if worst_region else None
+        if offset is not None and abs(offset) > 5.5:
+            worst_note = f"Healthy against own baseline ({worst_id}: placement offset {offset:+.1f}% vs factory nominal)"
+        else:
+            worst_note = f"Healthy operating envelope ({worst_id})"
     else:
         worst_color = "#94A3B8"
         worst_note = "No valid regional telemetry"
@@ -322,7 +342,8 @@ def render_four_region_map_html(
         <div style="margin-top: 14px; padding: 10px 12px; background: rgba(30, 41, 59, 0.6); border-left: 3px solid #38BDF8; border-radius: 4px; font-size: 0.75rem; color: #94A3B8; line-height: 1.45;">
             <strong>Physically Honest Fault Model:</strong> Each regional monitor tracks gate delay (tau = 100 / f_MHz) within its constrained Pblock.
             RO frequency shift reflects regional NBTI/HCI aging, supply droop, or thermal variation. Floorplan coordinates represent configured Pblock placement constraints in the Vivado floorplan, not dynamically localized physical defect coordinates.
-            <br/><strong>Multi-Pblock Quorum Policy:</strong> The weighted RO average serves as the overall health metric on top. An isolated single-pblock anomaly (e.g. R2) does not degrade the entire chip; 2 or more degrading pblocks are required to trigger overall system degradation.
+            <br/><strong>Per-Region Baselines:</strong> Ring-oscillator frequency depends mostly on placement and routing, so each region is judged by drift from its own start-up baseline (warning &minus;3.0%, critical &minus;5.5%), not by one absolute frequency.
+            <br/><strong>Multi-Pblock Quorum Policy:</strong> An isolated single-pblock anomaly does not change the overall chip status; {quorum_min} or more degrading pblocks are required (configurable via REGIONAL_QUORUM_MIN). Every region card always shows its true state.
         </div>
     </div>
     """).strip()

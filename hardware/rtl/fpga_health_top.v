@@ -113,10 +113,39 @@ module fpga_health_top (
                          {2'b00, ro_r3_freq_mhz_x10} + {2'b00, ro_r4_freq_mhz_x10};
     wire [15:0] ro_freq_mhz_x10 = ro_sum[17:2]; // Average (sum / 4)
 
-    // Worst-case (minimum) frequency for conservative on-board hardware LED health indication
-    wire [15:0] min_r12 = (ro_r1_freq_mhz_x10 < ro_r2_freq_mhz_x10) ? ro_r1_freq_mhz_x10 : ro_r2_freq_mhz_x10;
-    wire [15:0] min_r34 = (ro_r3_freq_mhz_x10 < ro_r4_freq_mhz_x10) ? ro_r3_freq_mhz_x10 : ro_r4_freq_mhz_x10;
-    wire [15:0] ro_worst_freq_mhz_x10 = (min_r12 < min_r34) ? min_r12 : min_r34;
+    // Per-region baseline capture + drift classification for the on-board health LEDs.
+    // Each region is judged against ITS OWN start-up baseline (see regional_baseline_checker),
+    // not one fixed frequency: ring-oscillator frequency depends on placement/routing, so a
+    // healthy region can legitimately run far below the others.
+    wire        r1_ready, r2_ready, r3_ready, r4_ready;
+    wire        r1_warn,  r2_warn,  r3_warn,  r4_warn;
+    wire        r1_deg,   r2_deg,   r3_deg,   r4_deg;
+    wire [15:0] r1_base,  r2_base,  r3_base,  r4_base;
+
+    regional_baseline_checker u_chk_r1 (
+        .clk(clk), .rst(rst),
+        .i_freq_mhz_x10(ro_r1_freq_mhz_x10), .i_freq_valid(ro_r1_valid),
+        .o_base_ready(r1_ready), .o_base_mhz_x10(r1_base), .o_warning(r1_warn), .o_degraded(r1_deg)
+    );
+    regional_baseline_checker u_chk_r2 (
+        .clk(clk), .rst(rst),
+        .i_freq_mhz_x10(ro_r2_freq_mhz_x10), .i_freq_valid(ro_r2_valid),
+        .o_base_ready(r2_ready), .o_base_mhz_x10(r2_base), .o_warning(r2_warn), .o_degraded(r2_deg)
+    );
+    regional_baseline_checker u_chk_r3 (
+        .clk(clk), .rst(rst),
+        .i_freq_mhz_x10(ro_r3_freq_mhz_x10), .i_freq_valid(ro_r3_valid),
+        .o_base_ready(r3_ready), .o_base_mhz_x10(r3_base), .o_warning(r3_warn), .o_degraded(r3_deg)
+    );
+    regional_baseline_checker u_chk_r4 (
+        .clk(clk), .rst(rst),
+        .i_freq_mhz_x10(ro_r4_freq_mhz_x10), .i_freq_valid(ro_r4_valid),
+        .o_base_ready(r4_ready), .o_base_mhz_x10(r4_base), .o_warning(r4_warn), .o_degraded(r4_deg)
+    );
+
+    wire ro_cal_done   = r1_ready & r2_ready & r3_ready & r4_ready;
+    wire ro_any_deg    = r1_deg  | r2_deg  | r3_deg  | r4_deg;
+    wire ro_any_warn   = r1_warn | r2_warn | r3_warn | r4_warn;
 
     // =========================================================================
     // 3. XADC On-Chip Temperature & Voltage Sensor Reader
@@ -202,17 +231,20 @@ module fpga_health_top (
     // =========================================================================
     // 6. On-Board Diagnostic LEDs
     // =========================================================================
-    // Local hardware classification rules (Physical 436.0 MHz baseline):
-    // Degraded: Temp >= 52°C OR RO Freq (worst region) < 412 MHz OR Error Rate >= 1000 ppm
-    // Warning:  Temp >= 45°C OR RO Freq (worst region) < 423 MHz OR Error Rate >= 100 ppm
-    // Healthy:  Nominal
+    // Local hardware classification rules (per-region baselines, see regional_baseline_checker):
+    // Degraded: Temp >= 52 C OR any region >= 5.5 % below ITS OWN baseline (or dead) OR Error Rate >= 1000 ppm
+    // Warning:  Temp >= 45 C OR any region >= 3.0 % below ITS OWN baseline            OR Error Rate >= 100 ppm
+    // Healthy:  Nominal and all four region baselines captured
+    // While the baselines are still being captured (first ~0.1 s after reset) led[12] is lit and
+    // the RO-based part of the classification is withheld, so a region is never judged against a
+    // limit that does not apply to it.
     wire is_degraded;
     wire is_warning;
     wire is_healthy;
 
-    assign is_degraded = (temp_c_x10 >= 16'd520) || (ro_worst_freq_mhz_x10 < 16'd4120) || (error_count_ppm >= 20'd1000);
-    assign is_warning  = !is_degraded && ((temp_c_x10 >= 16'd450) || (ro_worst_freq_mhz_x10 < 16'd4230) || (error_count_ppm >= 20'd100));
-    assign is_healthy  = !is_degraded && !is_warning;
+    assign is_degraded = (temp_c_x10 >= 16'd520) || (ro_cal_done && ro_any_deg) || (error_count_ppm >= 20'd1000);
+    assign is_warning  = !is_degraded && ((temp_c_x10 >= 16'd450) || (ro_cal_done && ro_any_warn) || (error_count_ppm >= 20'd100));
+    assign is_healthy  = ro_cal_done && !is_degraded && !is_warning;
 
     assign led[0]  = heartbeat_led;       // 1 Hz Heartbeat
     assign led[1]  = tx_active;           // UART TX Active
@@ -223,7 +255,8 @@ module fpga_health_top (
     assign led[6]  = sw_test_flag;
     assign led[7]  = uart_busy;
 
-    assign led[12:8] = 5'b00000;
+    assign led[11:8] = 4'b0000;
+    assign led[12]   = ~ro_cal_done;      // Calibrating: per-region RO baselines not yet captured
 
     assign led[13] = is_healthy;          // Green indicator (Healthy)
     assign led[14] = is_warning;          // Yellow indicator (Warning)

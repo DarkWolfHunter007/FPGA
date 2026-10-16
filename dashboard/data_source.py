@@ -312,6 +312,9 @@ class LiveUARTDataSource:
         self.buffer_size = buffer_size
         self.buffer: List[Dict[str, float]] = []
         self.baseline_sample: Optional[Dict[str, float]] = None
+        # True while the factory-nominal fallback is in use because no clean, stable
+        # start-up window has been seen yet. Calibration is retried on every new packet.
+        self._baseline_is_fallback: bool = False
 
     def connect(self) -> bool:
         return self.receiver.connect()
@@ -351,17 +354,26 @@ class LiveUARTDataSource:
                 if len(self.buffer) > self.buffer_size:
                     self.buffer.pop(0)
 
-                if self.baseline_sample is None and len(self.buffer) >= 5:
-                    init_df = pd.DataFrame(self.buffer[:5])
+                needs_baseline = self.baseline_sample is None or self._baseline_is_fallback
+                if needs_baseline and len(self.buffer) >= 5:
+                    # First attempt uses the first 5 packets; retries use the latest 5.
+                    window = self.buffer[:5] if self.baseline_sample is None else self.buffer[-5:]
+                    init_df = pd.DataFrame(window)
                     base_cols = ["Temperature", "VCCINT", "VCCAUX", "VCCBRAM", "RO_Frequency", "RO_Delay_ns", "Error_Rate"]
                     for r in ["RO_R1", "RO_R2", "RO_R3", "RO_R4", "RO_R1_Delay_ns", "RO_R2_Delay_ns", "RO_R3_Delay_ns", "RO_R4_Delay_ns"]:
                         if r in init_df.columns:
                             base_cols.append(r)
                     cand_base = init_df[base_cols].mean().to_dict()
 
-                    # Validate candidate baseline: A baseline MUST represent a verified healthy state.
-                    # Degraded or out-of-limits initial readings must NOT poison the baseline reference.
+                    # A baseline MUST come from a settled, healthy start-up window.
+                    # 1) Plausible: every region's candidate must pass validate_regional_baseline.
+                    # 2) Stable: each region's spread across the window must be small (<= 2%).
+                    # 3) Healthy: judged against the candidate's OWN regional baselines, so a
+                    #    placement-driven offset (e.g. R2 = 321.8 MHz) is not mistaken for damage,
+                    #    while temperature, supply rails and error rate still must be nominal.
                     is_candidate_healthy = True
+                    is_stable = True
+                    cand_regional: Dict[str, float] = {}
                     for r in ["R1", "R2", "R3", "R4"]:
                         ro_k = f"RO_{r}"
                         if ro_k in cand_base:
@@ -369,10 +381,27 @@ class LiveUARTDataSource:
                             if not is_v:
                                 is_candidate_healthy = False
                                 break
+                            cand_regional[ro_k] = cand_base[ro_k]
+                            col_mean = float(init_df[ro_k].mean())
+                            if col_mean > 0 and (float(init_df[ro_k].max()) - float(init_df[ro_k].min())) / col_mean > 0.02:
+                                is_stable = False
 
-                    cand_eng = evaluate_engineering_limits(cand_base)
-                    if not is_candidate_healthy or cand_eng.has_hard_violations or cand_eng.max_severity != LimitSeverity.NORMAL:
-                        # Reject candidate; fall back to documented factory nominals
+                    # Every sample must be clean on its own: one hot / low-rail / error-burst sample
+                    # must not be averaged away into a baseline that looks acceptable.
+                    all_samples_clean = True
+                    for rec in window:
+                        rec_eng = evaluate_engineering_limits(rec, regional_baselines=cand_regional)
+                        if rec_eng.has_hard_violations or rec_eng.max_severity != LimitSeverity.NORMAL:
+                            all_samples_clean = False
+                            break
+                    cand_eng = evaluate_engineering_limits(cand_base, regional_baselines=cand_regional)
+                    if is_candidate_healthy and is_stable and all_samples_clean \
+                            and not cand_eng.has_hard_violations \
+                            and cand_eng.max_severity == LimitSeverity.NORMAL:
+                        self.baseline_sample = cand_base
+                        self._baseline_is_fallback = False
+                    elif self.baseline_sample is None:
+                        # Not calibratable yet; use documented factory nominals and keep retrying.
                         self.baseline_sample = {
                             "Temperature": 35.0,
                             "VCCINT": 1.000,
@@ -390,8 +419,7 @@ class LiveUARTDataSource:
                             "RO_R4_Delay_ns": 0.2294,
                             "Error_Rate": 0.000010
                         }
-                    else:
-                        self.baseline_sample = cand_base
+                        self._baseline_is_fallback = True
         return last_packet
 
     def get_data(self, window_size: int = 150, sample_idx: Optional[int] = None) -> Tuple[pd.DataFrame, pd.Series, Dict[str, Any]]:
@@ -496,6 +524,7 @@ class LiveUARTDataSource:
     def reset(self):
         self.buffer.clear()
         self.baseline_sample = None
+        self._baseline_is_fallback = False
 
 
 class EstimatedDataSource:

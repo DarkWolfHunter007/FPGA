@@ -64,9 +64,15 @@ Complete hardware RTL design, constraints, synthesis, and programming guide for 
 | `led[3]` | `V19` | **RO Oscillating** | Lit when Ring Oscillator is running |
 | `led[4]` | `W18` | **Error Injected** | Lit when `sw[2]` is active |
 | `led[5]` | `U15` | **Mode Select** | Lit when `sw[0]` is in Hello Handshake mode |
-| `led[13]`| `N3`  | **Health: HEALTHY** | Lit when Temperature, RO Freq, and Error Rate are nominal |
-| `led[14]`| `P1`  | **Health: WARNING** | Lit when intermediate aging or elevated error rate is detected |
-| `led[15]`| `L1`  | **Health: DEGRADED**| Lit when severe stress or high error rate is detected |
+| `led[12]`| `P3`  | **Calibrating** | Lit for the first ~0.1 s after reset while each region captures its own RO baseline. The RO-based health LEDs are withheld until it turns off. If it stays on, an oscillator is halted (`sw[1]` up) or unstable |
+| `led[13]`| `N3`  | **Health: HEALTHY** | Lit when all four RO baselines are captured and Temperature, RO drift, and Error Rate are nominal |
+| `led[14]`| `P1`  | **Health: WARNING** | Lit when any region is 3.0 % or more below **its own** baseline, Temp >= 45 C, or Error Rate >= 100 ppm |
+| `led[15]`| `L1`  | **Health: DEGRADED**| Lit when any region is 5.5 % or more below **its own** baseline (or dead), Temp >= 52 C, or Error Rate >= 1000 ppm |
+
+> **Per-region baselines.** Ring-oscillator frequency is set mostly by placement and routing, so the
+> LEDs no longer compare every region to one fixed frequency (the old `< 412 MHz` rule lit the red LED
+> for a healthy region that simply routed slower). See `FALSE_DEGRADED_FIX.md`. Press `btnC` (reset)
+> to recapture the baselines.
 
 ### Master Clock and Serial Pins
 - **System Clock**: 100.0 MHz on Pin `W5` (`sys_clk_pin`, Period 10.0 ns)

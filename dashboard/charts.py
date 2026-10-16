@@ -189,12 +189,21 @@ def create_temperature_chart(
 def create_ro_frequency_chart(
     df: pd.DataFrame,
     baseline_freq: float = 436.0,
-    warning_freq: float = 422.9,
-    critical_freq: float = 412.0,
+    warning_freq: Optional[float] = None,
+    critical_freq: Optional[float] = None,
     adaptive_scaling: bool = True,
     zoom_factor: float = 3.0
 ) -> alt.Chart:
-    """Graph 1: Ring Oscillator Frequency Trend (MHz) with adaptive deviation scaling."""
+    """Graph 1: Ring Oscillator Frequency Trend (MHz) with adaptive deviation scaling.
+
+    Warning / critical lines follow the baseline (-3.0% / -5.5%) unless given explicitly;
+    for the 436.0 MHz factory baseline they are the legacy 422.9 / 412.0 MHz.
+    """
+    _f_scale = float(baseline_freq) / 436.0 if baseline_freq else 1.0
+    if warning_freq is None:
+        warning_freq = round(422.9 * _f_scale, 1)
+    if critical_freq is None:
+        critical_freq = round(412.0 * _f_scale, 1)
     plot_df = df.reset_index()
     plot_df["Sample_Index"] = plot_df.index
 
@@ -265,12 +274,21 @@ def create_ro_frequency_chart(
 def create_ro_delay_chart(
     df: pd.DataFrame,
     baseline_delay: float = 0.2294,
-    warning_delay: float = 0.2365,
-    critical_delay: float = 0.2427,
+    warning_delay: Optional[float] = None,
+    critical_delay: Optional[float] = None,
     adaptive_scaling: bool = True,
     zoom_factor: float = 3.0
 ) -> alt.Chart:
-    """Graph 2: Ring Oscillator Delay Trend with adaptive deviation scaling."""
+    """Graph 2: Ring Oscillator Delay Trend with adaptive deviation scaling.
+
+    Warning / critical lines follow the baseline unless given explicitly; for the
+    0.2294 ns factory baseline they are the legacy 0.2365 / 0.2427 ns.
+    """
+    _d_scale = float(baseline_delay) / 0.2294 if baseline_delay else 1.0
+    if warning_delay is None:
+        warning_delay = round(0.2365 * _d_scale, 4)
+    if critical_delay is None:
+        critical_delay = round(0.2427 * _d_scale, 4)
     plot_df = df.reset_index()
     plot_df["Sample_Index"] = plot_df.index
 

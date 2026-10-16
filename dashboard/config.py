@@ -368,16 +368,42 @@ REGIONAL_CONFIG: Dict[str, Dict[str, Any]] = {
 
 
 # =============================================================================
+# Per-Region Baseline Model (why a fixed 412 MHz limit caused false "Degraded")
+# =============================================================================
+# A ring oscillator's absolute frequency depends mostly on PLACEMENT and ROUTING,
+# not on silicon aging. Two regions on the same healthy die can legitimately read
+# 440 MHz and 322 MHz if Vivado routes one feedback loop through more wire.
+# Aging therefore has to be judged as DRIFT FROM THAT REGION'S OWN BASELINE, not
+# against one absolute number shared by all regions.
+#
+#   * Every region limit (warning / critical / over-frequency) is the legacy limit
+#     scaled by (region baseline / factory nominal). With a 436.0 MHz baseline the
+#     limits are exactly the legacy 422.9 / 412.0 MHz.
+#   * A calibrated baseline is accepted anywhere inside +/- REGIONAL_BASELINE_
+#     TOLERANCE_PCT of the factory nominal. A baseline that differs from nominal
+#     by more than PLACEMENT_OFFSET_NOTE_PCT is flagged as a placement offset in
+#     the diagnostic note so it is never silent.
+# =============================================================================
+REGIONAL_BASELINE_TOLERANCE_PCT: float = 40.0
+PLACEMENT_OFFSET_NOTE_PCT: float = 5.5
+
+# Minimum number of degrading regions needed to change the OVERALL chip status.
+# Each region card always shows its own true state regardless of this value.
+#   2 = isolated single-region anomaly does not change overall status (default)
+#   1 = any single region going critical makes the overall status Degraded
+REGIONAL_QUORUM_MIN: int = 2
+
+
+# =============================================================================
 # Regional Frequency Weighting & Independent Fault Assessment Architecture
 # =============================================================================
 # Default weights: Equal weighting across all four symmetric silicon regions.
 # Justification:
-#   In the absence of empirically validated spatial aging gradients or asymmetric
-#   sensor calibration, each of the four identical 5-stage ring oscillators (R1..R4)
-#   is assigned an equal weight of 0.25 (total = 1.0).
-#   This reproduces the hardware arithmetic mean while allowing user-configured
-#   weighting when differential measurement reliability or localized hotspot
-#   weighting is justified by calibration.
+#   Each region is first normalised to its own baseline (see above), so all four
+#   channels are already on the same "fraction of healthy" scale. With no
+#   empirically validated spatial aging gradient, each of the four identical
+#   5-stage ring oscillators (R1..R4) gets an equal weight of 0.25 (total = 1.0).
+#   Down-weighting a region (the former R2 = 0.05) would only hide its readings.
 #
 # Critical Safety Invariant:
 #   A weighted aggregate frequency summary MUST NEVER override or mask a regional
@@ -385,10 +411,10 @@ REGIONAL_CONFIG: Dict[str, Dict[str, Any]] = {
 #   over any averaging or weighting scheme.
 # =============================================================================
 DEFAULT_REGIONAL_WEIGHTS: Dict[str, float] = {
-    "R1": 0.35,
-    "R2": 0.05,
-    "R3": 0.30,
-    "R4": 0.30
+    "R1": 0.25,
+    "R2": 0.25,
+    "R3": 0.25,
+    "R4": 0.25
 }
 
 
@@ -410,7 +436,7 @@ def validate_regional_weights(
         expected_regions = ["R1", "R2", "R3", "R4"]
 
     if weights is None:
-        return (True, DEFAULT_REGIONAL_WEIGHTS.copy(), "Using calibrated structural regional weights (R1:0.35, R2:0.05, R3:0.30, R4:0.30)")
+        return (True, DEFAULT_REGIONAL_WEIGHTS.copy(), "Using default equal regional weights (R1:0.25, R2:0.25, R3:0.25, R4:0.25)")
 
     if not isinstance(weights, dict):
         return (False, DEFAULT_REGIONAL_WEIGHTS.copy(), f"Weights must be a dictionary, got {type(weights).__name__}")
@@ -585,32 +611,70 @@ def calculate_weighted_regional_frequency(
     }
 
 
+def baseline_normalized_frequency(
+    frequencies: Dict[str, Any],
+    regional_baselines: Optional[Dict[str, float]] = None,
+    weights: Optional[Dict[str, float]] = None
+) -> Optional[float]:
+    """
+    Overall RO frequency expressed on the factory-nominal (436 MHz) scale:
+
+        f_norm = nominal * sum_i( w_i * f_i / base_i ) / sum_i( w_i )
+
+    Each region is divided by ITS OWN validated baseline first, so a region that
+    is slow only because of routing (R2 = 321.8 MHz with a 321.8 MHz baseline)
+    contributes "100% of healthy" instead of dragging the average down, while a
+    region that has really slowed down against its own baseline still does.
+    The ML model was trained on the nominal scale, so it consumes this value.
+
+    `frequencies` and `regional_baselines` may be keyed "R1" or "RO_R1".
+    Returns None when no valid region reading is available.
+    """
+    regional_baselines = regional_baselines or {}
+    _, w_used, _ = validate_regional_weights(weights, expected_regions=["R1", "R2", "R3", "R4"])
+    num = 0.0
+    den = 0.0
+    nominal = float(RO_NOMINAL_MHZ)
+    for r in ["R1", "R2", "R3", "R4"]:
+        raw = frequencies.get(f"RO_{r}", frequencies.get(r))
+        try:
+            f = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(f) or not (10.0 <= f <= 800.0):
+            continue
+        base_in = regional_baselines.get(f"RO_{r}", regional_baselines.get(r))
+        _, base, _, _ = validate_regional_baseline(r, base_in)
+        w = float(w_used.get(r, 0.0))
+        if w <= 0.0 or base <= 0.0:
+            continue
+        num += w * (f / base)
+        den += w
+    if den <= 0.0:
+        return None
+    return nominal * (num / den)
+
+
 def calibrate_history_dataframe(
     df: Any,
-    weights: Optional[Dict[str, float]] = None
+    weights: Optional[Dict[str, float]] = None,
+    regional_baselines: Optional[Dict[str, float]] = None
 ) -> Any:
     """
-    Calibrates historical telemetry dataframe timing series according to the Multi-Pblock
-    Quorum Policy and calibrated regional weights.
+    Builds the overall RO timing series the ML model and the trend charts consume.
 
-    Rules:
-      1. If regional RO channels (RO_R1..RO_R4) are present:
-         - Preserves original raw hardware arithmetic frequency in 'RO_Raw_Frequency'.
-         - Computes weighted RO frequency series using validated structural weights:
-             w_freq = sum(w[i] * RO_R[i]) / sum(w[i])
-         - For each sample row, checks quorum:
-             degraded_pblocks: regions with RO_R[i] <= critical_freq (412.0 MHz)
-             warning_pblocks: regions with 412.0 MHz < RO_R[i] <= warning_freq (422.9 MHz)
-             total_degrading = degraded_count + warning_count
-         - Quorum Policy:
-             * If total_degrading >= 2: Multi-pblock degradation triggers overall degradation.
-               The main 'RO_Frequency' changes to reflect the degraded condition (raw hardware mean).
-             * If total_degrading < 2 (isolated single-pblock anomaly like R2):
-               The main 'RO_Frequency' is governed by the calibrated weighted RO frequency (nominal / Healthy).
-         - Recomputes derived stage delay:
-             RO_Delay_ns = round(100.0 / RO_Frequency, 4)
-      2. Recomputes differential and rolling features if present in df (for ML model alignment):
-         - RO_Frequency_change, RO_Delay_change, RO_Frequency_mean, RO_Frequency_std.
+    If regional RO channels (RO_R1..RO_R4) are present:
+      * The original hardware arithmetic mean is preserved in 'RO_Raw_Frequency'.
+      * 'RO_Weighted_Frequency' and 'RO_Frequency' become the BASELINE-NORMALISED
+        overall frequency (see baseline_normalized_frequency): each region divided
+        by its own baseline, then mapped onto the factory-nominal scale.
+        A healthy board therefore reads ~436 MHz whatever the per-region placement
+        offsets are, and real aging in any region pulls the value down.
+      * 'RO_Delay_ns' = 100 / RO_Frequency and the rolling ML features
+        (change / mean / std) are recomputed from the normalised series.
+
+    No regional reading is masked: the quorum rule only decides the overall chip
+    status in evaluate_engineering_limits(), never this series.
     """
     if df is None:
         return df
@@ -629,54 +693,33 @@ def calibrate_history_dataframe(
     if not has_all_regs:
         return calibrated
 
-    # Resolve weights
-    is_valid_w, weights_used, _ = validate_regional_weights(weights, expected_regions=reg_keys)
-    w1 = weights_used.get("R1", 0.35)
-    w2 = weights_used.get("R2", 0.05)
-    w3 = weights_used.get("R3", 0.30)
-    w4 = weights_used.get("R4", 0.30)
-    tot_w = w1 + w2 + w3 + w4
-    if tot_w <= 0:
-        tot_w = 1.0
-
     # Preserve raw uncalibrated hardware frequency
     if "RO_Raw_Frequency" not in calibrated.columns and "RO_Frequency" in calibrated.columns:
         calibrated["RO_Raw_Frequency"] = calibrated["RO_Frequency"].copy()
 
-    # Calculate weighted frequency series
-    weighted_series = (
-        calibrated["RO_R1"] * w1 +
-        calibrated["RO_R2"] * w2 +
-        calibrated["RO_R3"] * w3 +
-        calibrated["RO_R4"] * w4
-    ) / tot_w
-    calibrated["RO_Weighted_Frequency"] = weighted_series.round(2)
+    _, w_used, _ = validate_regional_weights(weights, expected_regions=reg_keys)
+    regional_baselines = regional_baselines or {}
+    nominal = float(RO_NOMINAL_MHZ)
 
-    # Thresholds for quorum policy (412.0 MHz critical, 422.9 MHz warning)
-    crit_limit = 412.0
-    warn_limit = 422.9
+    num = None
+    den = 0.0
+    for r in reg_keys:
+        w = float(w_used.get(r, 0.0))
+        if w <= 0.0:
+            continue
+        _, base, _, _ = validate_regional_baseline(
+            r, regional_baselines.get(f"RO_{r}", regional_baselines.get(r))
+        )
+        term = (calibrated[f"RO_{r}"] / base) * w
+        num = term if num is None else num + term
+        den += w
 
-    # Quorum calculation per row: count how many regions are degrading
-    degraded_count = (
-        (calibrated["RO_R1"] <= crit_limit).astype(int) +
-        (calibrated["RO_R2"] <= crit_limit).astype(int) +
-        (calibrated["RO_R3"] <= crit_limit).astype(int) +
-        (calibrated["RO_R4"] <= crit_limit).astype(int)
-    )
-    warning_count = (
-        ((calibrated["RO_R1"] > crit_limit) & (calibrated["RO_R1"] <= warn_limit)).astype(int) +
-        ((calibrated["RO_R2"] > crit_limit) & (calibrated["RO_R2"] <= warn_limit)).astype(int) +
-        ((calibrated["RO_R3"] > crit_limit) & (calibrated["RO_R3"] <= warn_limit)).astype(int) +
-        ((calibrated["RO_R4"] > crit_limit) & (calibrated["RO_R4"] <= warn_limit)).astype(int)
-    )
-    total_degrading = degraded_count + warning_count
-    quorum_triggered = total_degrading >= 2
+    if num is None or den <= 0.0:
+        return calibrated
 
-    # Vectorized assignment:
-    # If quorum triggered (>= 2 degrading regions): keep raw hardware arithmetic frequency
-    # If quorum NOT triggered (< 2 degrading regions, e.g. isolated R2): use weighted frequency
-    raw_col = calibrated["RO_Raw_Frequency"] if "RO_Raw_Frequency" in calibrated.columns else calibrated["RO_Frequency"]
-    calibrated["RO_Frequency"] = raw_col.where(quorum_triggered, calibrated["RO_Weighted_Frequency"])
+    normalized_series = (nominal * num / den).round(2)
+    calibrated["RO_Weighted_Frequency"] = normalized_series
+    calibrated["RO_Frequency"] = normalized_series
     calibrated["RO_Delay_ns"] = (100.0 / calibrated["RO_Frequency"]).round(4)
 
     # Update differential and rolling features if present
@@ -702,25 +745,32 @@ def validate_regional_baseline(
     baseline_input: Any
 ) -> Tuple[bool, float, str, str]:
     """
-    Validates a candidate regional baseline frequency against physical plausibility
-    and the healthy operating envelope for the specified Artix-7 quadrant.
+    Validates a candidate regional baseline frequency and selects the reference
+    the region is judged against.
 
-    Distinction Between Configured Nominal and Calibrated Baseline:
-      - Configured Nominal: Factory design benchmark derived from silicon characterization
-        (e.g., 436.0 MHz for R2). Authoritative fallback when calibration is absent/invalid.
-      - Calibrated Baseline: Board-specific reference frequency captured during verified
-        healthy operating conditions.
-      - Safety Invariant: A candidate baseline that falls below the warning or critical
-        threshold (e.g. ~322.2 MHz) MUST NOT be accepted as a valid baseline. Accepting an
-        unhealthy frequency as baseline would poison drift calculation and make severe
-        hardware degradation appear as zero-drift "Healthy".
+    Configured Nominal vs Calibrated Baseline:
+      - Configured Nominal: factory design benchmark (436.0 MHz). Used only when no
+        calibration exists or the candidate is implausible.
+      - Calibrated Baseline: this board's own reading for this region, captured at
+        start-up. It is what the region is compared against, because ring-oscillator
+        frequency is dominated by placement/routing (a healthy region can legitimately
+        read 322 MHz when Vivado stretches its feedback loop).
+
+    A candidate is accepted when it is finite, inside the physical sensor range and
+    within +/- REGIONAL_BASELINE_TOLERANCE_PCT of the factory nominal. Anything
+    outside that band is almost certainly a dead / stuck oscillator or a bad packet
+    and falls back to the factory nominal, so a broken region cannot silently
+    become its own baseline.
+
+    A baseline that differs from nominal by more than PLACEMENT_OFFSET_NOTE_PCT is
+    still accepted but called out in the diagnostic note (a placement offset is
+    information the engineer should see, not something to hide).
 
     Returns:
         (is_valid, selected_baseline_mhz, baseline_source, diagnostic_reason)
     """
     r_meta = REGIONAL_CONFIG.get(region_id, REGIONAL_CONFIG["R1"])
     f_nom = float(r_meta["nominal_freq"])
-    warn_bound = float(r_meta.get("warning_freq", round(f_nom * 0.97, 1)))
 
     if baseline_input is None or baseline_input == "":
         return (True, f_nom, "FACTORY_NOMINAL", f"Using configured factory nominal ({f_nom:.1f} MHz)")
@@ -748,25 +798,28 @@ def validate_regional_baseline(
             f"Physically impossible baseline ({b_val:.1f} MHz); fell back to factory nominal ({f_nom:.1f} MHz)"
         )
 
-    # Baseline health validation: A reference baseline must reside in the healthy envelope
-    if b_val < warn_bound:
+    # Plausibility band around the factory nominal
+    tol = float(REGIONAL_BASELINE_TOLERANCE_PCT) / 100.0
+    band_lo = f_nom * (1.0 - tol)
+    band_hi = f_nom * (1.0 + tol)
+    if not (band_lo <= b_val <= band_hi):
         return (
             False,
             f_nom,
             "FACTORY_NOMINAL_FALLBACK",
-            f"Unhealthy baseline ({b_val:.1f} MHz < {warn_bound:.1f} MHz warning boundary) rejected; fell back to factory nominal ({f_nom:.1f} MHz)"
+            f"Implausible baseline ({b_val:.1f} MHz outside {band_lo:.1f}-{band_hi:.1f} MHz plausibility band); "
+            f"fell back to factory nominal ({f_nom:.1f} MHz)"
         )
 
-    crit_high = float(SENSOR_CONFIG["RO_Frequency"]["critical_high"])
-    if b_val > crit_high:
-        return (
-            False,
-            f_nom,
-            "FACTORY_NOMINAL_FALLBACK",
-            f"Over-frequency baseline ({b_val:.1f} MHz > {crit_high:.1f} MHz) rejected; fell back to factory nominal ({f_nom:.1f} MHz)"
+    offset_pct = (b_val - f_nom) / f_nom * 100.0
+    if abs(offset_pct) > float(PLACEMENT_OFFSET_NOTE_PCT):
+        note = (
+            f"Calibrated board baseline ({b_val:.2f} MHz) - placement offset {offset_pct:+.1f}% vs factory nominal "
+            f"{f_nom:.1f} MHz; region is judged by drift from this baseline"
         )
-
-    return (True, b_val, "CALIBRATED_BOARD", f"Calibrated board baseline ({b_val:.2f} MHz)")
+    else:
+        note = f"Calibrated board baseline ({b_val:.2f} MHz)"
+    return (True, b_val, "CALIBRATED_BOARD", note)
 
 
 def evaluate_regional_health(
@@ -803,11 +856,19 @@ def evaluate_regional_health(
     f_nom = float(r_meta["nominal_freq"])
     crit_drop = float(r_meta.get("critical_drop_pct", 5.5))
     warn_drop = float(r_meta.get("warning_drop_pct", 3.0))
-    crit_bound = float(r_meta.get("critical_freq", round(f_nom * (1.0 - crit_drop / 100.0), 1)))
-    warn_bound = float(r_meta.get("warning_freq", round(f_nom * (1.0 - warn_drop / 100.0), 1)))
+    crit_nominal = float(r_meta.get("critical_freq", round(f_nom * (1.0 - crit_drop / 100.0), 1)))
+    warn_nominal = float(r_meta.get("warning_freq", round(f_nom * (1.0 - warn_drop / 100.0), 1)))
 
     # Step 1: Validate baseline
     is_base_valid, f_base, base_source, base_note = validate_regional_baseline(region_id, baseline_freq)
+
+    # Limits follow the region's OWN baseline (identical to the legacy 422.9 / 412.0 MHz
+    # when the baseline is the 436.0 MHz factory nominal). Ring-oscillator frequency is
+    # set mostly by placement/routing, so one absolute limit would flag a healthy region
+    # that simply routes slower.
+    limit_scale = (f_base / f_nom) if f_nom > 0 else 1.0
+    crit_bound = round(crit_nominal * limit_scale, 1)
+    warn_bound = round(warn_nominal * limit_scale, 1)
 
     # Step 2: Input validity check
     is_valid = True
@@ -911,8 +972,8 @@ def evaluate_regional_health(
     base_delay_ns = calculate_ro_delay_ns(f_base, stages=RO_STAGES)
     delay_drift_pct = ((delay_ns - base_delay_ns) / base_delay_ns) * 100.0 if base_delay_ns > 0 else 0.0
 
-    crit_high = float(SENSOR_CONFIG["RO_Frequency"]["critical_high"])
-    warn_high = float(SENSOR_CONFIG["RO_Frequency"]["warning_high"])
+    crit_high = float(SENSOR_CONFIG["RO_Frequency"]["critical_high"]) * limit_scale
+    warn_high = float(SENSOR_CONFIG["RO_Frequency"]["warning_high"]) * limit_scale
 
     # Step 5: Hard Critical Limits Evaluation (Absolute Precedence over Drift)
     if f_meas <= crit_bound or drift_pct <= -crit_drop or f_meas >= crit_high:
@@ -1015,6 +1076,7 @@ def evaluate_regional_health(
         "is_valid": True,
         "baseline_source": base_source,
         "baseline_note": base_note,
+        "baseline_offset_pct": round((f_base - f_nom) / f_nom * 100.0, 2) if f_nom > 0 else 0.0,
         "provenance": provenance
     }
 
@@ -1711,38 +1773,64 @@ def evaluate_engineering_limits(
                         limit_str = f"Outside normal range"
 
     # 3. Evaluate Timing Channels (RO_Frequency and Derived RO_Delay_ns)
+    # With regional monitors present, the aggregate is judged on the baseline-normalised
+    # scale (each region divided by its own baseline). The raw hardware mean of four
+    # oscillators that were placed differently is not a health metric on its own.
+    norm_freq = None
+    if has_regional_data:
+        norm_freq = baseline_normalized_frequency(telemetry, regional_baselines, regional_weights)
     if "RO_Frequency" in telemetry:
-        evals["RO_Frequency"] = evaluate_single_channel("RO_Frequency", telemetry["RO_Frequency"], provenance=provenance_map.get("RO_Frequency", "MEASURED"))
+        freq_for_eval = norm_freq if norm_freq is not None else telemetry["RO_Frequency"]
+        evals["RO_Frequency"] = evaluate_single_channel("RO_Frequency", freq_for_eval, provenance=provenance_map.get("RO_Frequency", "MEASURED"))
     if "RO_Delay_ns" in telemetry:
-        evals["RO_Delay_ns"] = evaluate_single_channel("RO_Delay_ns", telemetry["RO_Delay_ns"], provenance=provenance_map.get("RO_Delay_ns", "DERIVED"))
+        delay_for_eval = round(100.0 / norm_freq, 4) if norm_freq else telemetry["RO_Delay_ns"]
+        evals["RO_Delay_ns"] = evaluate_single_channel("RO_Delay_ns", delay_for_eval, provenance=provenance_map.get("RO_Delay_ns", "DERIVED"))
 
-    # 4. Integrate Timing Violation (Quorum Policy: 2 or more degrading pblocks changes overall main status)
+    # 4. Integrate Timing Violation (Quorum Policy: REGIONAL_QUORUM_MIN or more degrading
+    #    pblocks changes the overall main status; each region card always keeps its true state)
     total_degrading_pblocks = len(degraded_pblocks) + len(warning_pblocks)
     quorum_triggered = False
 
-    # Check whether the weighted average itself violates timing limits
+    # Check whether the weighted average itself violates timing limits.
+    # The limits are the legacy ones scaled by the weighted mean of the regional
+    # baselines, so an average of regions with different (placement-driven) baselines
+    # is compared against an equally shifted reference.
     w_freq = weighted_summary.get("weighted_frequency")
     w_eval_sev = LimitSeverity.NORMAL
     w_eval_reason = None
+    w_crit_limit = SENSOR_CONFIG["RO_Frequency"]["critical_low"]
+    w_warn_limit = SENSOR_CONFIG["RO_Frequency"]["warning_low"]
     if w_freq is not None:
-        cfg_ro = SENSOR_CONFIG["RO_Frequency"]
-        if w_freq <= cfg_ro["critical_low"]:
+        w_used = weighted_summary.get("weights_used", {}) or {}
+        base_num = 0.0
+        base_den = 0.0
+        for r_id in weighted_summary.get("valid_regions", []):
+            _, r_base_sel, _, _ = validate_regional_baseline(r_id, regional_baselines.get(f"RO_{r_id}"))
+            r_w = float(w_used.get(r_id, 0.0))
+            base_num += r_w * r_base_sel
+            base_den += r_w
+        if base_den > 0.0:
+            w_scale = (base_num / base_den) / float(RO_NOMINAL_MHZ)
+            w_crit_limit = round(w_crit_limit * w_scale, 1)
+            w_warn_limit = round(w_warn_limit * w_scale, 1)
+        if w_freq <= w_crit_limit:
             w_eval_sev = LimitSeverity.CRITICAL
-            w_eval_reason = f"Weighted RO average ({w_freq:.1f} MHz) breached critical boundary ({cfg_ro['critical_low']:.1f} MHz)"
-        elif w_freq <= cfg_ro["warning_low"]:
+            w_eval_reason = f"Weighted RO average ({w_freq:.1f} MHz) breached critical boundary ({w_crit_limit:.1f} MHz)"
+        elif w_freq <= w_warn_limit:
             w_eval_sev = LimitSeverity.WARNING
-            w_eval_reason = f"Weighted RO average ({w_freq:.1f} MHz) breached warning boundary ({cfg_ro['warning_low']:.1f} MHz)"
+            w_eval_reason = f"Weighted RO average ({w_freq:.1f} MHz) breached warning boundary ({w_warn_limit:.1f} MHz)"
 
-    if has_regional_data and total_degrading_pblocks >= 2:
-        # Multi-pblock degradation: quorum met! Changes overall main value to Degraded/Warning
+    quorum_label = "Multi-pblock" if total_degrading_pblocks >= 2 else "Single-pblock"
+    if has_regional_data and total_degrading_pblocks >= max(1, int(REGIONAL_QUORUM_MIN)):
+        # Quorum met: changes overall main value to Degraded/Warning
         quorum_triggered = True
         worst_region = worst_reg_id
-        if len(degraded_pblocks) >= 2 or (len(degraded_pblocks) >= 1 and total_degrading_pblocks >= 2):
+        if len(degraded_pblocks) >= 1:
             if max_sev != LimitSeverity.PHYSICALLY_INVALID:
                 max_sev = LimitSeverity.CRITICAL
             has_hard_viol = True
             pblock_names = ", ".join([f"{r} ({REGIONAL_CONFIG[r]['pblock']})" for r in (degraded_pblocks + warning_pblocks)])
-            multi_reason = f"Multi-pblock degradation detected ({pblock_names} showing degradation)"
+            multi_reason = f"{quorum_label} degradation detected ({pblock_names} showing degradation)"
             reasons.append(multi_reason)
             timing_reasons.append(multi_reason)
             primary_reason = multi_reason
@@ -1750,12 +1838,12 @@ def evaluate_engineering_limits(
             measured_str = worst_reg_meas
             limit_str = worst_reg_lim
             derived_delay_str = worst_reg_delay
-        elif len(warning_pblocks) >= 2:
+        elif len(warning_pblocks) >= 1:
             if max_sev == LimitSeverity.NORMAL:
                 max_sev = LimitSeverity.WARNING
             has_hard_viol = True
             pblock_names = ", ".join([f"{r} ({REGIONAL_CONFIG[r]['pblock']})" for r in warning_pblocks])
-            multi_reason = f"Multi-pblock warning drift detected ({pblock_names} showing degradation)"
+            multi_reason = f"{quorum_label} warning drift detected ({pblock_names} showing degradation)"
             reasons.append(multi_reason)
             timing_reasons.append(multi_reason)
             if primary_channel == "Nominal":
@@ -1776,7 +1864,7 @@ def evaluate_engineering_limits(
             primary_reason = w_eval_reason
             primary_channel = "RO_Frequency"
             measured_str = f"{w_freq:.1f} MHz"
-            limit_str = f"{SENSOR_CONFIG['RO_Frequency']['critical_low']:.1f} MHz"
+            limit_str = f"{w_crit_limit:.1f} MHz"
         elif w_eval_sev == LimitSeverity.WARNING:
             if max_sev == LimitSeverity.NORMAL:
                 max_sev = LimitSeverity.WARNING
@@ -1787,12 +1875,12 @@ def evaluate_engineering_limits(
                 primary_reason = w_eval_reason
                 primary_channel = "RO_Frequency"
                 measured_str = f"{w_freq:.1f} MHz"
-                limit_str = f"{SENSOR_CONFIG['RO_Frequency']['warning_low']:.1f} MHz"
-    elif has_regional_data and total_degrading_pblocks == 1:
-        # Isolated single-pblock anomaly (e.g. only R2):
-        # Quorum threshold (< 2) not met; overall main status remains governed by weighted average (HEALTHY)
+                limit_str = f"{w_warn_limit:.1f} MHz"
+    elif has_regional_data and 0 < total_degrading_pblocks < max(1, int(REGIONAL_QUORUM_MIN)):
+        # Isolated pblock anomaly below the quorum: the region card shows its true state,
+        # but the overall main status remains governed by the weighted average.
         worst_region = worst_reg_id
-        single_note = f"Isolated single-pblock anomaly in {worst_reg_id} ({REGIONAL_CONFIG[worst_reg_id]['pblock']}: {worst_reg_meas}); quorum policy requires >= 2 degraded pblocks to change overall system status."
+        single_note = f"Isolated single-pblock anomaly in {worst_reg_id} ({REGIONAL_CONFIG[worst_reg_id]['pblock']}: {worst_reg_meas}); quorum policy requires >= {int(REGIONAL_QUORUM_MIN)} degraded pblocks to change overall system status."
         timing_reasons.append(single_note)
     elif not has_regional_data and "RO_Frequency" in telemetry:
         # Fallback when no regional data is present

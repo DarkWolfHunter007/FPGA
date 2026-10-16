@@ -99,37 +99,50 @@ class TestFourRegionHealth(unittest.TestCase):
 
     def test_r2_critical_with_low_baseline_inconsistency_regression(self):
         """
-        REGRESSION TEST (Resolved):
-        Demonstrates that an R2 measured frequency around 322.1 MHz evaluated against
-        a low baseline of 322.20 MHz (drift = -0.03%) is correctly classified as Degraded
-        because 322.1 MHz violates the authoritative critical boundary (411.8 MHz).
-        Hard engineering limits take precedence over small baseline drift.
+        R2 reads ~322 MHz on this board purely because of placement/routing. Judged against
+        its OWN calibrated baseline (322.2 MHz) it is Healthy; the same reading with no
+        calibration (factory 436.0 MHz baseline) is still flagged. Real aging, measured as
+        drift from the region's own baseline, is still caught.
         """
         telemetry = {
-            "RO_Frequency": 322.3,
+            "RO_Frequency": 407.6,
             "RO_R1": 436.3,
-            "RO_R2": 322.1,  # Critical violation (configured critical boundary is 411.8 MHz)
+            "RO_R2": 322.1,
             "RO_R3": 436.1,
             "RO_R4": 435.9,
             "Temperature": 35.0,
             "VCCINT": 1.000,
             "Error_Rate": 0.00001
         }
-        regional_baselines = {
-            "RO_R1": 436.3,
-            "RO_R2": 322.20,  # Erroneously accepted degraded baseline
-            "RO_R3": 436.1,
-            "RO_R4": 435.9
-        }
-        regions = generate_four_region_data(telemetry, regional_baselines=regional_baselines)
-        r2 = next(r for r in regions if r["id"] == "R2")
+        calibrated = {"RO_R1": 436.3, "RO_R2": 322.20, "RO_R3": 436.1, "RO_R4": 435.9}
 
-        # R2 must NOT be Healthy when 322.1 MHz violates the critical limit (412.0 MHz)
-        self.assertNotEqual(r2["state"], "Healthy")
-        self.assertEqual(r2["state"], "Degraded")
-        self.assertIn("Below critical boundary", r2["indicator"])
-        self.assertEqual(r2["critical_freq"], 412.0)
-        self.assertEqual(r2["baseline_freq"], 436.0)
+        # Calibrated: R2 is Healthy against its own baseline (no false "Degraded")
+        regions = generate_four_region_data(telemetry, regional_baselines=calibrated)
+        r2 = next(r for r in regions if r["id"] == "R2")
+        self.assertEqual(r2["state"], "Healthy")
+        self.assertEqual(r2["severity"], LimitSeverity.NORMAL)
+        self.assertEqual(r2["baseline_source"], "CALIBRATED_BOARD")
+        self.assertAlmostEqual(r2["baseline_freq"], 322.2, places=1)
+        self.assertAlmostEqual(r2["drift_pct"], -0.03, places=1)
+        # Limits follow the region's baseline: 412.0 * 322.2 / 436.0 = 304.5
+        self.assertAlmostEqual(r2["critical_freq"], 304.5, places=1)
+        self.assertLess(r2["baseline_offset_pct"], -25.0)  # the placement offset stays visible
+        self.assertIn("placement offset", r2["baseline_note"])
+
+        # Uncalibrated (factory nominal): the same reading is still flagged
+        regions_uncal = generate_four_region_data(telemetry)
+        r2_uncal = next(r for r in regions_uncal if r["id"] == "R2")
+        self.assertEqual(r2_uncal["state"], "Degraded")
+        self.assertIn("Below critical boundary", r2_uncal["indicator"])
+        self.assertEqual(r2_uncal["critical_freq"], 412.0)
+        self.assertEqual(r2_uncal["baseline_freq"], 436.0)
+
+        # Real aging: 300.0 MHz is -6.9% from R2's own baseline -> Degraded
+        aged = dict(telemetry, RO_R2=300.0)
+        regions_aged = generate_four_region_data(aged, regional_baselines=calibrated)
+        r2_aged = next(r for r in regions_aged if r["id"] == "R2")
+        self.assertEqual(r2_aged["state"], "Degraded")
+        self.assertLess(r2_aged["drift_pct"], -5.5)
 
     def test_render_four_region_map_html(self):
         """Verify HTML generation produces 2x2 grid with quadrant details."""
@@ -226,15 +239,23 @@ class TestFourRegionHealth(unittest.TestCase):
         self.assertEqual(r2["warning_freq"], 422.9)
 
     def test_critical_precedence_over_small_drift(self):
-        """A critical boundary violation unconditionally takes precedence over small baseline drift."""
-        # Even if a baseline of 322.2 MHz is artificially supplied:
-        res = evaluate_regional_health("R2", measurement=322.1, baseline_freq=322.20)
-        self.assertEqual(res["state"], "Degraded")
-        self.assertEqual(res["severity"], LimitSeverity.CRITICAL)
-        self.assertIn("Below critical boundary", res["indicator"])
-        # Drift must still be reported accurately as a separate diagnostic metric
-        self.assertAlmostEqual(res["current_freq"], 322.1, places=1)
-        self.assertIn("critical_boundary", res)
+        """Factory-nominal limits still apply when no calibration exists; a calibrated baseline moves them."""
+        # No calibration / explicit factory baseline: a 322.1 MHz region is Degraded
+        for base in (None, 436.0):
+            res = evaluate_regional_health("R2", measurement=322.1, baseline_freq=base)
+            self.assertEqual(res["state"], "Degraded")
+            self.assertEqual(res["severity"], LimitSeverity.CRITICAL)
+            self.assertIn("Below critical boundary", res["indicator"])
+            self.assertAlmostEqual(res["current_freq"], 322.1, places=1)
+            self.assertIn("critical_boundary", res)
+
+        # Calibrated to its own 322.2 MHz baseline, the same reading is Healthy
+        res_cal = evaluate_regional_health("R2", measurement=322.1, baseline_freq=322.20)
+        self.assertEqual(res_cal["state"], "Healthy")
+
+        # ...and drift from that baseline still raises Warning / Degraded
+        self.assertEqual(evaluate_regional_health("R2", 312.0, baseline_freq=322.20)["state"], "Warning")   # -3.2%
+        self.assertEqual(evaluate_regional_health("R2", 300.0, baseline_freq=322.20)["state"], "Degraded")  # -6.9%
 
     def test_invalid_and_missing_data_not_healthy(self):
         """Missing, nonnumeric, non-finite, or implausible measurements must NEVER produce Healthy."""
@@ -258,31 +279,34 @@ class TestFourRegionHealth(unittest.TestCase):
             self.assertFalse(res["is_valid"])
 
     def test_baseline_validation_rejects_unhealthy_baseline(self):
-        """An invalid or unhealthy baseline cannot silently establish a healthy status."""
-        # Baseline near 322.2 MHz is severely degraded and must be rejected
+        """A placement-offset baseline is accepted (and flagged); implausible ones cannot become a baseline."""
+        # R2's real-board baseline (~322 MHz, -26% vs factory nominal) is a placement offset: accepted
         is_valid, chosen_base, src, reason = validate_regional_baseline("R2", 322.20)
-        self.assertFalse(is_valid)
-        self.assertEqual(chosen_base, 436.0)  # Fell back to factory nominal
-        self.assertEqual(src, "FACTORY_NOMINAL_FALLBACK")
-        self.assertIn("Unhealthy baseline", reason)
+        self.assertTrue(is_valid)
+        self.assertEqual(chosen_base, 322.20)
+        self.assertEqual(src, "CALIBRATED_BOARD")
+        self.assertIn("placement offset", reason)
 
-        # Non-numeric baseline must be rejected
-        is_v_str, chosen_str, src_str, _ = validate_regional_baseline("R2", "bad_base")
-        self.assertFalse(is_v_str)
-        self.assertEqual(chosen_str, 436.0)
+        # Dead / stuck / physically impossible / garbage candidates fall back to factory nominal
+        for bad in (100.0, 0.0, -5.0, 700.0, 950.0, float("nan"), float("inf"), "bad_base"):
+            is_v, chosen, src_bad, _ = validate_regional_baseline("R2", bad)
+            self.assertFalse(is_v, f"baseline {bad!r} must be rejected")
+            self.assertEqual(chosen, 436.0)
+            self.assertEqual(src_bad, "FACTORY_NOMINAL_FALLBACK")
 
         # Legitimate healthy calibrated baseline (including 436.0 MHz) must be accepted
-        is_v_cal, chosen_cal, src_cal, _ = validate_regional_baseline("R2", 436.0)
+        is_v_cal, chosen_cal, src_cal, note_cal = validate_regional_baseline("R2", 436.0)
         self.assertTrue(is_v_cal)
         self.assertEqual(chosen_cal, 436.0)
         self.assertEqual(src_cal, "CALIBRATED_BOARD")
+        self.assertNotIn("placement offset", note_cal)
 
     def test_overall_engineering_assessment_reflects_degraded_r2(self):
-        """A Degraded R2 region is preserved in regional_evals, but overall health follows quorum policy."""
+        """Uncalibrated, a 322 MHz R2 is flagged; calibrated to its own baseline the chip is Healthy."""
         telemetry = {
             "RO_Frequency": 436.0,
             "RO_R1": 436.3,
-            "RO_R2": 322.1,  # Critical boundary violation in isolated pblock
+            "RO_R2": 322.1,
             "RO_R3": 436.1,
             "RO_R4": 435.9,
             "Temperature": 35.0,
@@ -291,15 +315,22 @@ class TestFourRegionHealth(unittest.TestCase):
             "VCCBRAM": 1.000,
             "Error_Rate": 0.00001
         }
+        # Uncalibrated (factory nominal): R2 is Critical in the regional evaluation and the
+        # equal-weight aggregate also breaches the factory limit.
         assessment = evaluate_engineering_limits(telemetry)
-        # R2 itself is evaluated as Critical in regional evaluations
         self.assertEqual(assessment.regional_evaluations["R2"]["severity"], LimitSeverity.CRITICAL)
         self.assertEqual(assessment.degraded_pblocks, ["R2"])
-        # Under quorum policy (< 2 degraded pblocks), overall assessment remains NORMAL
-        self.assertEqual(assessment.max_severity, LimitSeverity.NORMAL)
-        self.assertFalse(assessment.has_hard_violations)
+        self.assertEqual(assessment.max_severity, LimitSeverity.CRITICAL)
 
-        final_res = determine_final_health("Healthy", 0.95, assessment)
+        # Calibrated to this board's own baselines: no false degradation
+        baselines = {"RO_R1": 436.3, "RO_R2": 322.2, "RO_R3": 436.1, "RO_R4": 435.9}
+        assessment_cal = evaluate_engineering_limits(telemetry, regional_baselines=baselines)
+        self.assertEqual(assessment_cal.regional_evaluations["R2"]["severity"], LimitSeverity.NORMAL)
+        self.assertEqual(assessment_cal.degraded_pblocks, [])
+        self.assertEqual(assessment_cal.max_severity, LimitSeverity.NORMAL)
+        self.assertFalse(assessment_cal.has_hard_violations)
+
+        final_res = determine_final_health("Healthy", 0.95, assessment_cal)
         self.assertEqual(final_res["final_health"], "Healthy")
         self.assertFalse(final_res["override_applied"])
 
@@ -424,9 +455,10 @@ class TestFourRegionHealth(unittest.TestCase):
         res_ints = calculate_weighted_regional_frequency(telemetry, weights=equal_ints)
         self.assertEqual(res_ints["weighted_frequency"], arith_expected)
 
-        # Case C: weights=None uses calibrated DEFAULT_REGIONAL_WEIGHTS (434.15 MHz)
+        # Case C: weights=None uses the default EQUAL weights, i.e. the arithmetic mean
+        self.assertEqual(DEFAULT_REGIONAL_WEIGHTS, equal_w)
         res_none = calculate_weighted_regional_frequency(telemetry, weights=None)
-        self.assertEqual(res_none["weighted_frequency"], 434.15)
+        self.assertEqual(res_none["weighted_frequency"], arith_expected)
         self.assertEqual(res_none["arithmetic_frequency"], arith_expected)
 
     def test_valid_configured_weights_produce_expected_weighted_average(self):
@@ -477,13 +509,15 @@ class TestFourRegionHealth(unittest.TestCase):
             telemetry = {"RO_R1": 439.4, "RO_R2": 321.8, "RO_R3": 441.1, "RO_R4": 439.8}
             res = calculate_weighted_regional_frequency(telemetry, weights=bad_weights)
             self.assertIsNotNone(res["weighted_frequency"])
-            self.assertEqual(res["weighted_frequency"], 434.15)
+            self.assertEqual(res["weighted_frequency"], 410.52)  # default equal weights = arithmetic mean
             self.assertEqual(res["weights_used"], DEFAULT_REGIONAL_WEIGHTS)
 
     def test_r2_at_321_8_remains_critical_below_while_overall_is_healthy(self):
         """
-        4. Single-pblock anomaly: R2 at 321.8 MHz remains critical in regional data,
-        while overall health on top is Healthy via weighted RO average (Quorum policy).
+        The real-board case (R2 = 321.8 MHz from placement, others ~440 MHz).
+        Calibrated to this board's own baselines every region and the overall status are
+        Healthy. An isolated region that genuinely ages against its own baseline stays below
+        the quorum: its card shows Degraded but the overall status is not changed.
         """
         telemetry = {
             "RO_Frequency": 410.5,
@@ -497,23 +531,27 @@ class TestFourRegionHealth(unittest.TestCase):
             "VCCBRAM": 1.001,
             "Error_Rate": 0.000000
         }
-        # Verify regional data retains R2 as critical
-        regions = generate_four_region_data(telemetry)
-        r2 = next(r for r in regions if r["id"] == "R2")
-        self.assertEqual(r2["state"], "Degraded")
-        self.assertEqual(r2["severity"], LimitSeverity.CRITICAL)
-        self.assertEqual(r2["current_freq"], 321.8)
+        baselines = {"RO_R1": 439.4, "RO_R2": 321.8, "RO_R3": 441.1, "RO_R4": 439.8}
 
-        # Verify overall assessment uses weighted average (434.15 MHz) and evaluates Healthy
-        assessment = evaluate_engineering_limits(telemetry)
+        # Calibrated: no region and no overall false degradation
+        regions = generate_four_region_data(telemetry, baselines)
+        self.assertTrue(all(r["state"] == "Healthy" for r in regions))
+        assessment = evaluate_engineering_limits(telemetry, regional_baselines=baselines)
         self.assertEqual(assessment.max_severity, LimitSeverity.NORMAL)
         self.assertFalse(assessment.has_hard_violations)
-        self.assertEqual(assessment.degraded_pblocks, ["R2"])
-        self.assertFalse(assessment.quorum_triggered)
-        self.assertEqual(assessment.weighted_frequency, 434.15)
+        self.assertEqual(assessment.degraded_pblocks, [])
+        self.assertEqual(assessment.channel_evaluations["RO_Frequency"].severity, LimitSeverity.NORMAL)
+        self.assertEqual(determine_final_health("Healthy", 0.95, assessment)["final_health"], "Healthy")
 
-        # Final health evaluates to Healthy
-        final_res = determine_final_health("Healthy", 0.95, assessment)
+        # Genuine isolated aging in R2 (-6.8% vs its own baseline): card Degraded, quorum not met
+        aged = dict(telemetry, RO_R2=300.0, RO_Frequency=405.1)
+        regions_aged = generate_four_region_data(aged, baselines)
+        self.assertEqual(next(r for r in regions_aged if r["id"] == "R2")["state"], "Degraded")
+        assessment_aged = evaluate_engineering_limits(aged, regional_baselines=baselines)
+        self.assertEqual(assessment_aged.degraded_pblocks, ["R2"])
+        self.assertFalse(assessment_aged.quorum_triggered)
+        self.assertEqual(assessment_aged.max_severity, LimitSeverity.NORMAL)
+        final_res = determine_final_health("Healthy", 0.95, assessment_aged)
         self.assertEqual(final_res["final_health"], "Healthy")
         self.assertFalse(final_res["override_applied"])
 
@@ -559,8 +597,8 @@ class TestFourRegionHealth(unittest.TestCase):
         self.assertIn("R2", res_m["missing_regions"])
         self.assertNotIn("R2", res_m["valid_regions"])
         self.assertFalse(res_m["is_valid"])
-        # Remaining valid regions averaged with normalized active weights (0.35, 0.30, 0.30 sum to 0.95)
-        expected_w = round((0.35 * 439.4 + 0.30 * 441.1 + 0.30 * 439.8) / 0.95, 2)
+        # Remaining valid regions averaged with normalized active (equal) weights
+        expected_w = round((439.4 + 441.1 + 439.8) / 3.0, 2)
         self.assertEqual(res_m["weighted_frequency"], expected_w)
 
         # Case B: Out-of-bounds physically implausible frequency (e.g. 950.0 MHz)
@@ -623,9 +661,10 @@ class TestFourRegionHealth(unittest.TestCase):
 
     def test_calibrate_history_dataframe_isolated_anomaly(self):
         """
-        Verify that calibrate_history_dataframe preserves raw hardware frequency in RO_Raw_Frequency,
-        calibrates RO_Frequency to the weighted average (~434.15 MHz) for an isolated single-pblock anomaly (R2=321.8),
-        derives RO_Delay_ns (~0.2303 ns), and updates rolling features.
+        calibrate_history_dataframe preserves the raw hardware mean in RO_Raw_Frequency and
+        builds the overall RO series on the baseline-normalised scale: with per-region
+        baselines a healthy board (R2 = 321.8 MHz from placement) reads the factory nominal.
+        Without baselines it is the plain equal-weight arithmetic mean (nothing is masked).
         """
         raw_rows = [{
             "RO_R1": 439.4, "RO_R2": 321.8, "RO_R3": 441.1, "RO_R4": 439.8,
@@ -635,20 +674,25 @@ class TestFourRegionHealth(unittest.TestCase):
             "RO_Frequency_mean": 410.5, "RO_Frequency_change": 0.0
         }] * 25
         df = pd.DataFrame(raw_rows)
-        calibrated = calibrate_history_dataframe(df)
+        baselines = {"RO_R1": 439.4, "RO_R2": 321.8, "RO_R3": 441.1, "RO_R4": 439.8}
 
+        calibrated = calibrate_history_dataframe(df, regional_baselines=baselines)
         self.assertIn("RO_Raw_Frequency", calibrated.columns)
         self.assertIn("RO_Weighted_Frequency", calibrated.columns)
         self.assertEqual(calibrated["RO_Raw_Frequency"].iloc[0], 410.5)
-        self.assertAlmostEqual(calibrated["RO_Weighted_Frequency"].iloc[0], 434.15, places=2)
-        self.assertAlmostEqual(calibrated["RO_Frequency"].iloc[0], 434.15, places=2)
-        self.assertAlmostEqual(calibrated["RO_Delay_ns"].iloc[0], round(100.0 / 434.15, 4), places=4)
-        self.assertAlmostEqual(calibrated["RO_Frequency_mean"].iloc[-1], 434.15, places=2)
+        self.assertAlmostEqual(calibrated["RO_Frequency"].iloc[0], 436.0, places=1)
+        self.assertAlmostEqual(calibrated["RO_Delay_ns"].iloc[0], 0.2294, places=4)
+        self.assertAlmostEqual(calibrated["RO_Frequency_mean"].iloc[-1], 436.0, places=1)
+
+        # No baselines: plain arithmetic mean (410.52), R2's slowness is NOT hidden
+        uncal = calibrate_history_dataframe(df)
+        self.assertAlmostEqual(uncal["RO_Frequency"].iloc[0], 410.52, places=2)
 
     def test_calibrate_history_dataframe_multi_pblock_quorum(self):
         """
-        Verify that when 2 or more pblocks degrade (e.g. R2=321.8 and R4=405.0 <= 412.0 MHz),
-        the multi-pblock quorum policy is triggered and RO_Frequency reflects the degraded state.
+        Real aging is never masked in the overall series: with per-region baselines, R4 slowing
+        from 439.8 to 405.0 MHz pulls the normalised overall frequency below nominal, and without
+        baselines the series is the plain arithmetic mean of the four regions.
         """
         multi_rows = [{
             "RO_R1": 439.4, "RO_R2": 321.8, "RO_R3": 441.1, "RO_R4": 405.0,
@@ -657,11 +701,17 @@ class TestFourRegionHealth(unittest.TestCase):
             "Error_Rate": 0.0
         }] * 10
         df = pd.DataFrame(multi_rows)
-        calibrated = calibrate_history_dataframe(df)
 
-        self.assertEqual(calibrated["RO_Frequency"].iloc[0], 401.8)
-        self.assertIn("RO_Raw_Frequency", calibrated.columns)
-        self.assertEqual(calibrated["RO_Raw_Frequency"].iloc[0], 401.8)
+        uncal = calibrate_history_dataframe(df)
+        self.assertAlmostEqual(uncal["RO_Frequency"].iloc[0], 401.82, places=2)
+        self.assertEqual(uncal["RO_Raw_Frequency"].iloc[0], 401.8)
+
+        baselines = {"RO_R1": 439.4, "RO_R2": 321.8, "RO_R3": 441.1, "RO_R4": 439.8}
+        cal = calibrate_history_dataframe(df, regional_baselines=baselines)
+        expected = 436.0 * (1.0 + 1.0 + 1.0 + 405.0 / 439.8) / 4.0
+        self.assertAlmostEqual(cal["RO_Frequency"].iloc[0], expected, places=1)
+        self.assertLess(cal["RO_Frequency"].iloc[0], 432.0)
+        self.assertEqual(cal["RO_Raw_Frequency"].iloc[0], 401.8)
 
     def test_calibrated_ro_charts_render_with_threshold_rules(self):
         """

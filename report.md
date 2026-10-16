@@ -1,3 +1,7 @@
+> **Update:** the R2 weight of 0.05 and the "judge every region against 412 MHz" limits described in
+> sections 6, 8, 9 and 10 below have been superseded. Regions are now judged by drift from their own
+> start-up baseline and the default weights are equal. See `FALSE_DEGRADED_FIX.md`.
+
 # FPGA Health Classification, Region Naming & Common 436.0 MHz Baseline Report
 
 **File:** `report.md`  
